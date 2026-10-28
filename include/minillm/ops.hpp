@@ -48,4 +48,10 @@ struct RopeCache {
 //   rope_theta : frequency base (e.g. 10000.0)
 RopeCache build_rope_cache(int max_pos, int head_dim, float rope_theta);
 
+// Apply RoPE rotation in-place to a projected Q or K tensor.
+//   x          : [seq_len, n_heads * head_dim]  F32  (modified in-place)
+//   cache      : precomputed tables; head_dim inferred as 2 * cache.cos.shape()[1]
+//   pos_offset : starting sequence position (0 for prefill, current pos for decode step)
+void rope_apply(Tensor& x, const RopeCache& cache, int pos_offset = 0);
+
 } // namespace minillm

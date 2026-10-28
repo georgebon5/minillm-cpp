@@ -245,3 +245,72 @@ TEST_CASE("build_rope_cache: SmolLM2 dimensions are valid", "[ops][rope]") {
     REQUIRE(cache.cos.numel() == 2048 * 32);
     REQUIRE(cache.sin.numel() == 2048 * 32);
 }
+
+// ── RoPE apply ────────────────────────────────────────────────────────────────
+
+TEST_CASE("rope_apply: position 0 is a no-op", "[ops][rope]") {
+    // At pos=0: cos=1, sin=0 → x' = x
+    auto cache = build_rope_cache(4, 4, 10000.f);
+
+    Tensor x({1, 4}, DType::F32);  // seq_len=1, n_heads=1, head_dim=4
+    float* p = x.data_as<float>();
+    p[0] = 3.f; p[1] = 4.f; p[2] = 1.f; p[3] = 2.f;
+
+    rope_apply(x, cache, 0);
+
+    REQUIRE(x.at<float>({0, 0}) == Catch::Approx(3.f).epsilon(1e-6));
+    REQUIRE(x.at<float>({0, 1}) == Catch::Approx(4.f).epsilon(1e-6));
+}
+
+TEST_CASE("rope_apply: known rotation at position 1 (rope_theta=1)", "[ops][rope]") {
+    // With rope_theta=1: θ_0 = 1/(1^0) = 1.0 rad at m=1.
+    // x = [1, 0]  →  x' = [cos(1), sin(1)]
+    auto cache = build_rope_cache(4, 2, 1.f);  // head_dim=2, half=1
+
+    Tensor x({1, 2}, DType::F32);
+    x.data_as<float>()[0] = 1.f;
+    x.data_as<float>()[1] = 0.f;
+
+    rope_apply(x, cache, /*pos_offset=*/1);
+
+    REQUIRE(x.at<float>({0, 0}) == Catch::Approx(std::cos(1.f)).epsilon(1e-5));
+    REQUIRE(x.at<float>({0, 1}) == Catch::Approx(std::sin(1.f)).epsilon(1e-5));
+}
+
+TEST_CASE("rope_apply: rotation preserves vector norm", "[ops][rope]") {
+    auto cache = build_rope_cache(16, 8, 10000.f);
+
+    Tensor x({4, 8}, DType::F32);  // 4 tokens, 1 head, head_dim=8
+    float* p = x.data_as<float>();
+    for (size_t i = 0; i < 32; ++i)
+        p[i] = static_cast<float>(i + 1);
+
+    // Compute norms before rotation.
+    std::vector<float> norms_before(4);
+    for (int t = 0; t < 4; ++t) {
+        float n = 0.f;
+        for (int d = 0; d < 8; ++d) n += p[t*8+d] * p[t*8+d];
+        norms_before[t] = n;
+    }
+
+    rope_apply(x, cache, 0);
+
+    for (int t = 0; t < 4; ++t) {
+        float n = 0.f;
+        for (int d = 0; d < 8; ++d) n += x.data_as<float>()[t*8+d] * x.data_as<float>()[t*8+d];
+        REQUIRE(n == Catch::Approx(norms_before[t]).epsilon(1e-4));
+    }
+}
+
+TEST_CASE("rope_apply: pos_offset shifts positions correctly", "[ops][rope]") {
+    // Applying with pos_offset=2 should give same result as taking row 2 from cache.
+    auto cache = build_rope_cache(8, 2, 1.f);
+
+    Tensor x1({1, 2}, DType::F32);
+    x1.data_as<float>()[0] = 1.f; x1.data_as<float>()[1] = 0.f;
+    rope_apply(x1, cache, 2);
+
+    // Direct check: angle = 2*1.0 = 2 rad
+    REQUIRE(x1.at<float>({0, 0}) == Catch::Approx(std::cos(2.f)).epsilon(1e-5));
+    REQUIRE(x1.at<float>({0, 1}) == Catch::Approx(std::sin(2.f)).epsilon(1e-5));
+}

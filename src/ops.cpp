@@ -136,4 +136,42 @@ RopeCache build_rope_cache(int max_pos, int head_dim, float rope_theta) {
     return {std::move(cos_t), std::move(sin_t)};
 }
 
+// ── RoPE apply ────────────────────────────────────────────────────────────────
+
+void rope_apply(Tensor& x, const RopeCache& cache, int pos_offset) {
+    assert(x.ndim() == 2 && x.dtype() == DType::F32);
+
+    const size_t seq_len  = x.shape()[0];
+    const size_t total    = x.shape()[1];
+    const size_t half     = cache.cos.shape()[1];   // head_dim / 2
+    const size_t head_dim = half * 2;
+
+    assert(total % head_dim == 0 && "x width must be a multiple of head_dim");
+    const size_t n_heads = total / head_dim;
+
+    assert(static_cast<size_t>(pos_offset) + seq_len <= cache.cos.shape()[0]
+           && "positions exceed precomputed cache size");
+
+    float*       xp    = x.data_as<float>();
+    const float* cos_p = cache.cos.data_as<float>();
+    const float* sin_p = cache.sin.data_as<float>();
+
+    for (size_t s = 0; s < seq_len; ++s) {
+        const size_t pos = static_cast<size_t>(pos_offset) + s;
+        const float* cv  = cos_p + pos * half;
+        const float* sv  = sin_p + pos * half;
+
+        for (size_t h = 0; h < n_heads; ++h) {
+            float* row = xp + s * total + h * head_dim;
+
+            for (size_t i = 0; i < half; ++i) {
+                const float x0 = row[2 * i];
+                const float x1 = row[2 * i + 1];
+                row[2 * i]     = x0 * cv[i] - x1 * sv[i];
+                row[2 * i + 1] = x1 * cv[i] + x0 * sv[i];
+            }
+        }
+    }
+}
+
 } // namespace minillm
