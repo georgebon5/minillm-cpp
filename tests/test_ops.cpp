@@ -187,6 +187,7 @@ TEST_CASE("linear: known matrix multiply", "[ops][linear]") {
 }
 
 TEST_CASE("linear: bias is added", "[ops][linear]") {
+
     // Same x, W as above + bias [10, 20]
     Tensor x({1, 3}, DType::F32);
     x.data_as<float>()[0] = 1.f;
@@ -204,4 +205,43 @@ TEST_CASE("linear: bias is added", "[ops][linear]") {
     Tensor y = linear(x, W, &b);
     REQUIRE(y.at<float>({0, 0}) == Catch::Approx(16.f));
     REQUIRE(y.at<float>({0, 1}) == Catch::Approx(32.f));
+}
+
+// ── RoPE cache ────────────────────────────────────────────────────────────────
+
+TEST_CASE("build_rope_cache: output shape", "[ops][rope]") {
+    auto cache = build_rope_cache(128, 64, 10000.f);
+    REQUIRE(cache.cos.shape() == std::vector<size_t>{128, 32});
+    REQUIRE(cache.sin.shape() == std::vector<size_t>{128, 32});
+}
+
+TEST_CASE("build_rope_cache: position 0 has cos=1 sin=0", "[ops][rope]") {
+    auto cache = build_rope_cache(8, 4, 10000.f);
+    // At m=0: angle = 0 * θ_i = 0 → cos=1, sin=0 for all i
+    for (size_t i = 0; i < 2; ++i) {
+        REQUIRE(cache.cos.at<float>({0, i}) == Catch::Approx(1.f).epsilon(1e-6));
+        REQUIRE(cache.sin.at<float>({0, i}) == Catch::Approx(0.f).margin(1e-6));
+    }
+}
+
+TEST_CASE("build_rope_cache: cos²+sin²=1 for all entries", "[ops][rope]") {
+    auto cache = build_rope_cache(32, 8, 10000.f);
+    const float* cp = cache.cos.data_as<float>();
+    const float* sp = cache.sin.data_as<float>();
+    for (size_t k = 0; k < cache.cos.numel(); ++k)
+        REQUIRE(cp[k] * cp[k] + sp[k] * sp[k] == Catch::Approx(1.f).epsilon(1e-5));
+}
+
+TEST_CASE("build_rope_cache: first freq θ₀=1 at position 1", "[ops][rope]") {
+    // θ_0 = 1/(10000^(0/d)) = 1.0 → angle at m=1 is 1.0 rad
+    auto cache = build_rope_cache(4, 4, 10000.f);
+    REQUIRE(cache.cos.at<float>({1, 0}) == Catch::Approx(std::cos(1.f)).epsilon(1e-5));
+    REQUIRE(cache.sin.at<float>({1, 0}) == Catch::Approx(std::sin(1.f)).epsilon(1e-5));
+}
+
+TEST_CASE("build_rope_cache: SmolLM2 dimensions are valid", "[ops][rope]") {
+    // Verify no crash and correct shape for the actual model config.
+    auto cache = build_rope_cache(2048, 64, 10000.f);
+    REQUIRE(cache.cos.numel() == 2048 * 32);
+    REQUIRE(cache.sin.numel() == 2048 * 32);
 }

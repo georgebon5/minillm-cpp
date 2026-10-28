@@ -108,4 +108,32 @@ Tensor linear(const Tensor& x, const Tensor& W, const Tensor* b) {
     return out;
 }
 
+// ── RoPE ──────────────────────────────────────────────────────────────────────
+
+RopeCache build_rope_cache(int max_pos, int head_dim, float rope_theta) {
+    assert(head_dim % 2 == 0 && "head_dim must be even for RoPE");
+
+    const int half = head_dim / 2;
+
+    Tensor cos_t({static_cast<size_t>(max_pos), static_cast<size_t>(half)}, DType::F32);
+    Tensor sin_t({static_cast<size_t>(max_pos), static_cast<size_t>(half)}, DType::F32);
+
+    float* cos_p = cos_t.data_as<float>();
+    float* sin_p = sin_t.data_as<float>();
+
+    for (int m = 0; m < max_pos; ++m) {
+        for (int i = 0; i < half; ++i) {
+            // θ_i = 1 / (rope_theta ^ (2i / head_dim))
+            const float theta = 1.f / std::pow(rope_theta,
+                                               2.f * static_cast<float>(i) /
+                                               static_cast<float>(head_dim));
+            const float angle = static_cast<float>(m) * theta;
+            cos_p[m * half + i] = std::cos(angle);
+            sin_p[m * half + i] = std::sin(angle);
+        }
+    }
+
+    return {std::move(cos_t), std::move(sin_t)};
+}
+
 } // namespace minillm

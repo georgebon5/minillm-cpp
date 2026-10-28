@@ -25,10 +25,27 @@ Tensor rms_norm(const Tensor& x, const Tensor& weight, float eps);
 // ── Linear projection ─────────────────────────────────────────────────────────
 
 // Computes y = x @ W^T + b  (bias is optional).
-//   x : [seq_len, in_features]     F32
-//   W : [out_features, in_features] F32  (weight, stored as rows of output neurons)
-//   b : [out_features]              F32  (pass nullptr for no bias)
-//   returns: [seq_len, out_features] F32  (owning)
+//   x : [seq_len, in_features]      F32
+//   W : [out_features, in_features]  F32  (rows = output neurons)
+//   b : [out_features]               F32  (pass nullptr for no bias)
+//   returns: [seq_len, out_features]  F32  (owning)
 Tensor linear(const Tensor& x, const Tensor& W, const Tensor* b = nullptr);
+
+// ── RoPE (Rotary Position Embedding) ─────────────────────────────────────────
+
+// Precomputed cos/sin tables for RoPE.
+// Shape of each table: [max_position, head_dim/2]
+struct RopeCache {
+    Tensor cos;  // cos(m * θ_i)
+    Tensor sin;  // sin(m * θ_i)
+};
+
+// Precompute RoPE cos/sin tables for all positions 0..max_pos-1.
+//   θ_i = 1 / (rope_theta ^ (2i / head_dim))  for i in [0, head_dim/2)
+//
+//   max_pos    : typically model.max_position_embeddings (e.g. 2048)
+//   head_dim   : hidden_size / num_attention_heads (e.g. 64)
+//   rope_theta : frequency base (e.g. 10000.0)
+RopeCache build_rope_cache(int max_pos, int head_dim, float rope_theta);
 
 } // namespace minillm
