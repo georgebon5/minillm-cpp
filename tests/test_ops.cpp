@@ -500,3 +500,63 @@ TEST_CASE("gqa_attention: single token output is finite", "[ops][gqa]") {
     for (size_t i = 0; i < out.numel(); ++i)
         REQUIRE(std::isfinite(out.data_as<float>()[i]));
 }
+
+// ── SwiGLU MLP ────────────────────────────────────────────────────────────────
+
+TEST_CASE("silu: known values", "[ops][mlp]") {
+    REQUIRE(silu(0.f)  == Catch::Approx(0.f).margin(1e-6));
+    // silu(1) = 1 / (1 + e^-1) ≈ 0.7311
+    REQUIRE(silu(1.f)  == Catch::Approx(1.f / (1.f + std::exp(-1.f))).epsilon(1e-6));
+    // silu(-1) ≈ -0.2689
+    REQUIRE(silu(-1.f) == Catch::Approx(-1.f / (1.f + std::exp(1.f))).epsilon(1e-6));
+    // For large x, silu(x) ≈ x
+    REQUIRE(silu(20.f) == Catch::Approx(20.f).epsilon(1e-4));
+}
+
+TEST_CASE("swiglu_mlp: output shape", "[ops][mlp]") {
+    // hidden=4, intermediate=6
+    Tensor W_gate({6, 4}, DType::F32);
+    Tensor W_up  ({6, 4}, DType::F32);
+    Tensor W_down({4, 6}, DType::F32);
+
+    Tensor x({3, 4}, DType::F32);
+    for (size_t i = 0; i < 12; ++i) x.data_as<float>()[i] = float(i) * 0.1f;
+
+    auto out = swiglu_mlp(x, W_gate, W_up, W_down);
+    REQUIRE(out.shape() == std::vector<size_t>{3, 4});
+}
+
+TEST_CASE("swiglu_mlp: zero gate → zero output", "[ops][mlp]") {
+    // If W_gate = 0 then gate = 0, silu(0) = 0, hidden = 0 → output = 0
+    Tensor W_gate({4, 4}, DType::F32);   // all zeros
+    Tensor W_up  ({4, 4}, DType::F32);
+    Tensor W_down({4, 4}, DType::F32);
+    // W_up and W_down can be anything — output must still be 0
+    for (size_t i = 0; i < 16; ++i) {
+        W_up.data_as<float>()[i]   = float(i + 1);
+        W_down.data_as<float>()[i] = float(i + 1);
+    }
+
+    Tensor x({2, 4}, DType::F32);
+    for (size_t i = 0; i < 8; ++i) x.data_as<float>()[i] = float(i + 1);
+
+    auto out = swiglu_mlp(x, W_gate, W_up, W_down);
+    for (size_t i = 0; i < out.numel(); ++i)
+        REQUIRE(out.data_as<float>()[i] == Catch::Approx(0.f).margin(1e-6));
+}
+
+TEST_CASE("swiglu_mlp: output is finite for typical values", "[ops][mlp]") {
+    Tensor W_gate({8, 4}, DType::F32);
+    Tensor W_up  ({8, 4}, DType::F32);
+    Tensor W_down({4, 8}, DType::F32);
+    for (size_t i = 0; i < W_gate.numel(); ++i) W_gate.data_as<float>()[i] = 0.01f;
+    for (size_t i = 0; i < W_up.numel();   ++i) W_up.data_as<float>()[i]   = 0.01f;
+    for (size_t i = 0; i < W_down.numel(); ++i) W_down.data_as<float>()[i] = 0.01f;
+
+    Tensor x({5, 4}, DType::F32);
+    for (size_t i = 0; i < x.numel(); ++i) x.data_as<float>()[i] = float(i) * 0.1f;
+
+    auto out = swiglu_mlp(x, W_gate, W_up, W_down);
+    for (size_t i = 0; i < out.numel(); ++i)
+        REQUIRE(std::isfinite(out.data_as<float>()[i]));
+}

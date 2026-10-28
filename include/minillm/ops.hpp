@@ -69,7 +69,23 @@ Tensor scaled_dot_product_attention(const Tensor& q,
                                      const Tensor& v,
                                      bool causal = false);
 
-// Grouped-Query Attention (GQA) layer — full multi-head projection + attention + output projection.
+// ── MLP ───────────────────────────────────────────────────────────────────────
+
+// SiLU activation: silu(x) = x * sigmoid(x) = x / (1 + exp(-x))
+inline float silu(float x) { return x / (1.f + std::exp(-x)); }
+
+// SwiGLU MLP: out = W_down * (silu(W_gate * x) ⊙ W_up * x)
+//   x      : [seq_len, hidden_size]          F32
+//   W_gate : [intermediate_size, hidden_size] F32
+//   W_up   : [intermediate_size, hidden_size] F32
+//   W_down : [hidden_size, intermediate_size] F32
+//   returns: [seq_len, hidden_size]            F32  (owning)
+Tensor swiglu_mlp(const Tensor& x,
+                   const Tensor& W_gate,
+                   const Tensor& W_up,
+                   const Tensor& W_down);
+
+// ── Grouped-Query Attention (GQA) layer — full multi-head projection + attention + output projection.
 //
 //   x          : [seq_len, hidden_size]            F32
 //   Wq         : [n_heads     * head_dim, hidden]  F32

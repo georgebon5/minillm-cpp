@@ -251,6 +251,30 @@ Tensor scaled_dot_product_attention(const Tensor& q,
     return out;
 }
 
+// ── MLP ───────────────────────────────────────────────────────────────────────
+
+Tensor swiglu_mlp(const Tensor& x,
+                   const Tensor& W_gate,
+                   const Tensor& W_up,
+                   const Tensor& W_down) {
+    assert(x.dtype() == DType::F32);
+
+    // Parallel gate and up projections
+    Tensor gate = linear(x, W_gate);   // [seq, intermediate]
+    Tensor up   = linear(x, W_up);     // [seq, intermediate]
+
+    // SwiGLU: gate[i] = silu(gate[i]) * up[i]  (in-place on gate)
+    float*       gp  = gate.data_as<float>();
+    const float* up_p = up.data_as<float>();
+    const size_t n   = gate.numel();
+
+    for (size_t i = 0; i < n; ++i)
+        gp[i] = silu(gp[i]) * up_p[i];
+
+    // Down projection
+    return linear(gate, W_down);       // [seq, hidden]
+}
+
 // ── GQA ───────────────────────────────────────────────────────────────────────
 
 // Copy columns [col_start, col_start+width) from every row of x.
