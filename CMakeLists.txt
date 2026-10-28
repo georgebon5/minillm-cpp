@@ -35,6 +35,7 @@ add_library(minillm STATIC
     src/model_config.cpp
     src/ops.cpp
     src/model.cpp
+    src/tokenizer.cpp
 )
 target_include_directories(minillm PUBLIC ${PROJECT_SOURCE_DIR}/include)
 target_compile_features(minillm PUBLIC cxx_std_20)
