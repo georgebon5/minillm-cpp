@@ -54,4 +54,17 @@ RopeCache build_rope_cache(int max_pos, int head_dim, float rope_theta);
 //   pos_offset : starting sequence position (0 for prefill, current pos for decode step)
 void rope_apply(Tensor& x, const RopeCache& cache, int pos_offset = 0);
 
+// ── Attention ─────────────────────────────────────────────────────────────────
+
+// Numerically stable softmax over a single row of `n` floats, in-place.
+// Exported so the sampler can reuse it for logit processing.
+void softmax_inplace(float* row, size_t n);
+
+// Scaled dot-product attention for a single head (no causal mask).
+//   q, k, v : [seq_len, head_dim]  F32
+//   returns : [seq_len, head_dim]  F32  (owning)
+Tensor scaled_dot_product_attention(const Tensor& q,
+                                     const Tensor& k,
+                                     const Tensor& v);
+
 } // namespace minillm

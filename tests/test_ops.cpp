@@ -314,3 +314,75 @@ TEST_CASE("rope_apply: pos_offset shifts positions correctly", "[ops][rope]") {
     REQUIRE(x1.at<float>({0, 0}) == Catch::Approx(std::cos(2.f)).epsilon(1e-5));
     REQUIRE(x1.at<float>({0, 1}) == Catch::Approx(std::sin(2.f)).epsilon(1e-5));
 }
+
+// ── Softmax ───────────────────────────────────────────────────────────────────
+
+TEST_CASE("softmax_inplace: sums to 1", "[ops][softmax]") {
+    std::vector<float> v = {1.f, 2.f, 3.f, 4.f};
+    softmax_inplace(v.data(), v.size());
+    float sum = 0.f;
+    for (float x : v) sum += x;
+    REQUIRE(sum == Catch::Approx(1.f).epsilon(1e-6));
+}
+
+TEST_CASE("softmax_inplace: uniform input gives uniform output", "[ops][softmax]") {
+    std::vector<float> v = {1.f, 1.f, 1.f, 1.f};
+    softmax_inplace(v.data(), v.size());
+    for (float x : v)
+        REQUIRE(x == Catch::Approx(0.25f).epsilon(1e-6));
+}
+
+TEST_CASE("softmax_inplace: large values do not overflow", "[ops][softmax]") {
+    std::vector<float> v = {1000.f, 1001.f, 1002.f};
+    softmax_inplace(v.data(), v.size());
+    float sum = 0.f;
+    for (float x : v) { REQUIRE(std::isfinite(x)); sum += x; }
+    REQUIRE(sum == Catch::Approx(1.f).epsilon(1e-6));
+}
+
+// ── Scaled dot-product attention ──────────────────────────────────────────────
+
+// Helper: make a [n, d] tensor filled with a constant.
+static Tensor make_const_tensor(size_t n, size_t d, float val) {
+    Tensor t({n, d}, DType::F32);
+    for (size_t i = 0; i < n * d; ++i) t.data_as<float>()[i] = val;
+    return t;
+}
+
+TEST_CASE("sdp_attention: output shape", "[ops][attention]") {
+    auto q = make_const_tensor(3, 4, 0.f);
+    auto k = make_const_tensor(3, 4, 0.f);
+    auto v = make_const_tensor(3, 4, 1.f);
+    auto out = scaled_dot_product_attention(q, k, v);
+    REQUIRE(out.shape() == std::vector<size_t>{3, 4});
+}
+
+TEST_CASE("sdp_attention: uniform scores → output is mean of V rows", "[ops][attention]") {
+    // Q=K=zero → all scores=0 → softmax gives uniform weights 1/N
+    // output[i] = (1/N) * sum_j V[j]
+    auto q = make_const_tensor(2, 2, 0.f);
+    auto k = make_const_tensor(2, 2, 0.f);
+
+    Tensor v({2, 2}, DType::F32);
+    v.data_as<float>()[0] = 1.f; v.data_as<float>()[1] = 2.f;  // row 0
+    v.data_as<float>()[2] = 3.f; v.data_as<float>()[3] = 4.f;  // row 1
+
+    auto out = scaled_dot_product_attention(q, k, v);
+
+    // Expected: 0.5*[1,2] + 0.5*[3,4] = [2, 3]
+    REQUIRE(out.at<float>({0, 0}) == Catch::Approx(2.f).epsilon(1e-5));
+    REQUIRE(out.at<float>({0, 1}) == Catch::Approx(3.f).epsilon(1e-5));
+    REQUIRE(out.at<float>({1, 0}) == Catch::Approx(2.f).epsilon(1e-5));
+}
+
+TEST_CASE("sdp_attention: single token output equals V", "[ops][attention]") {
+    // seq_len=1: softmax([score]) = [1.0] → output = 1.0 * V[0]
+    Tensor q({1, 4}, DType::F32); q.data_as<float>()[0] = 1.f;
+    Tensor k({1, 4}, DType::F32); k.data_as<float>()[0] = 1.f;
+    Tensor v({1, 4}, DType::F32);
+    for (int i = 0; i < 4; ++i) v.data_as<float>()[i] = float(i + 1);
+
+    auto out = scaled_dot_product_attention(q, k, v);
+    for (int i = 0; i < 4; ++i)
+        REQUIRE(out.data_as<float>()[i] == Catch::Approx(float(i + 1)).epsilon(1e-5));
+}

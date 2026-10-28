@@ -174,4 +174,72 @@ void rope_apply(Tensor& x, const RopeCache& cache, int pos_offset) {
     }
 }
 
+// ── Attention ─────────────────────────────────────────────────────────────────
+
+void softmax_inplace(float* row, size_t n) {
+    // Find max for numerical stability (prevents exp overflow).
+    float max_val = row[0];
+    for (size_t i = 1; i < n; ++i)
+        if (row[i] > max_val) max_val = row[i];
+
+    float sum = 0.f;
+    for (size_t i = 0; i < n; ++i) {
+        row[i] = std::exp(row[i] - max_val);
+        sum += row[i];
+    }
+    const float inv_sum = 1.f / sum;
+    for (size_t i = 0; i < n; ++i)
+        row[i] *= inv_sum;
+}
+
+Tensor scaled_dot_product_attention(const Tensor& q,
+                                     const Tensor& k,
+                                     const Tensor& v) {
+    assert(q.ndim() == 2 && k.ndim() == 2 && v.ndim() == 2);
+    assert(q.dtype() == DType::F32 && k.dtype() == DType::F32 && v.dtype() == DType::F32);
+
+    const size_t seq_len = q.shape()[0];
+    const size_t head_dim = q.shape()[1];
+    const float  scale    = 1.f / std::sqrt(static_cast<float>(head_dim));
+
+    assert(k.shape() == q.shape());
+    assert(v.shape()[0] == seq_len && v.shape()[1] == head_dim);
+
+    const float* qp = q.data_as<float>();
+    const float* kp = k.data_as<float>();
+    const float* vp = v.data_as<float>();
+
+    // Step 1: scores[i,j] = dot(q[i,:], k[j,:]) * scale
+    Tensor scores({seq_len, seq_len}, DType::F32);
+    float* sp = scores.data_as<float>();
+
+    for (size_t i = 0; i < seq_len; ++i) {
+        for (size_t j = 0; j < seq_len; ++j) {
+            float dot = 0.f;
+            for (size_t d = 0; d < head_dim; ++d)
+                dot += qp[i * head_dim + d] * kp[j * head_dim + d];
+            sp[i * seq_len + j] = dot * scale;
+        }
+    }
+
+    // Step 2: softmax row-wise
+    for (size_t i = 0; i < seq_len; ++i)
+        softmax_inplace(sp + i * seq_len, seq_len);
+
+    // Step 3: out[i,d] = sum_j scores[i,j] * v[j,d]
+    Tensor out({seq_len, head_dim}, DType::F32);
+    float* op = out.data_as<float>();
+
+    for (size_t i = 0; i < seq_len; ++i) {
+        for (size_t d = 0; d < head_dim; ++d) {
+            float acc = 0.f;
+            for (size_t j = 0; j < seq_len; ++j)
+                acc += sp[i * seq_len + j] * vp[j * head_dim + d];
+            op[i * head_dim + d] = acc;
+        }
+    }
+
+    return out;
+}
+
 } // namespace minillm
