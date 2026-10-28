@@ -60,11 +60,13 @@ void rope_apply(Tensor& x, const RopeCache& cache, int pos_offset = 0);
 // Exported so the sampler can reuse it for logit processing.
 void softmax_inplace(float* row, size_t n);
 
-// Scaled dot-product attention for a single head (no causal mask).
+// Scaled dot-product attention for a single head.
 //   q, k, v : [seq_len, head_dim]  F32
+//   causal  : if true, mask out j > i (upper triangle set to -inf before softmax)
 //   returns : [seq_len, head_dim]  F32  (owning)
 Tensor scaled_dot_product_attention(const Tensor& q,
                                      const Tensor& k,
-                                     const Tensor& v);
+                                     const Tensor& v,
+                                     bool causal = false);
 
 } // namespace minillm

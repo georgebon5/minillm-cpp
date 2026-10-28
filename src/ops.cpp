@@ -2,6 +2,7 @@
 #include <cassert>
 #include <cmath>
 #include <cstring>
+#include <limits>
 #include <stdexcept>
 
 namespace minillm {
@@ -194,7 +195,8 @@ void softmax_inplace(float* row, size_t n) {
 
 Tensor scaled_dot_product_attention(const Tensor& q,
                                      const Tensor& k,
-                                     const Tensor& v) {
+                                     const Tensor& v,
+                                     bool causal) {
     assert(q.ndim() == 2 && k.ndim() == 2 && v.ndim() == 2);
     assert(q.dtype() == DType::F32 && k.dtype() == DType::F32 && v.dtype() == DType::F32);
 
@@ -222,7 +224,14 @@ Tensor scaled_dot_product_attention(const Tensor& q,
         }
     }
 
-    // Step 2: softmax row-wise
+    // Step 1b: apply causal mask — future positions become -inf
+    if (causal) {
+        for (size_t i = 0; i < seq_len; ++i)
+            for (size_t j = i + 1; j < seq_len; ++j)
+                sp[i * seq_len + j] = -std::numeric_limits<float>::infinity();
+    }
+
+    // Step 2: softmax row-wise (handles -inf correctly: exp(-inf)=0)
     for (size_t i = 0; i < seq_len; ++i)
         softmax_inplace(sp + i * seq_len, seq_len);
 

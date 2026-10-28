@@ -386,3 +386,59 @@ TEST_CASE("sdp_attention: single token output equals V", "[ops][attention]") {
     for (int i = 0; i < 4; ++i)
         REQUIRE(out.data_as<float>()[i] == Catch::Approx(float(i + 1)).epsilon(1e-5));
 }
+
+// ── Causal mask ───────────────────────────────────────────────────────────────
+
+TEST_CASE("sdp_attention: causal mask — token 0 only sees itself", "[ops][causal]") {
+    // Q=K=zero → uniform raw scores. With causal mask:
+    // Row 0: attend only to j=0 → output[0] = V[0]
+    auto q = make_const_tensor(3, 3, 0.f);
+    auto k = make_const_tensor(3, 3, 0.f);
+
+    // V = identity-like rows for easy verification
+    Tensor v({3, 3}, DType::F32);
+    float* vp = v.data_as<float>();
+    vp[0]=1.f; vp[1]=0.f; vp[2]=0.f;  // row 0
+    vp[3]=0.f; vp[4]=1.f; vp[5]=0.f;  // row 1
+    vp[6]=0.f; vp[7]=0.f; vp[8]=1.f;  // row 2
+
+    auto out = scaled_dot_product_attention(q, k, v, /*causal=*/true);
+
+    // Token 0 attends only to position 0 → output = V[0]
+    REQUIRE(out.at<float>({0, 0}) == Catch::Approx(1.f).epsilon(1e-5));
+    REQUIRE(out.at<float>({0, 1}) == Catch::Approx(0.f).margin(1e-5));
+    REQUIRE(out.at<float>({0, 2}) == Catch::Approx(0.f).margin(1e-5));
+}
+
+TEST_CASE("sdp_attention: causal mask — token 1 averages positions 0 and 1", "[ops][causal]") {
+    auto q = make_const_tensor(3, 3, 0.f);
+    auto k = make_const_tensor(3, 3, 0.f);
+    Tensor v({3, 3}, DType::F32);
+    float* vp = v.data_as<float>();
+    vp[0]=1.f; vp[1]=0.f; vp[2]=0.f;
+    vp[3]=0.f; vp[4]=1.f; vp[5]=0.f;
+    vp[6]=0.f; vp[7]=0.f; vp[8]=1.f;
+
+    auto out = scaled_dot_product_attention(q, k, v, /*causal=*/true);
+
+    // Token 1 attends to positions 0 and 1 with equal weight 0.5
+    REQUIRE(out.at<float>({1, 0}) == Catch::Approx(0.5f).epsilon(1e-5));
+    REQUIRE(out.at<float>({1, 1}) == Catch::Approx(0.5f).epsilon(1e-5));
+    REQUIRE(out.at<float>({1, 2}) == Catch::Approx(0.f).margin(1e-5));
+}
+
+TEST_CASE("sdp_attention: causal=false matches causal=true for seq_len=1", "[ops][causal]") {
+    Tensor q({1, 4}, DType::F32);
+    Tensor k({1, 4}, DType::F32);
+    Tensor v({1, 4}, DType::F32);
+    for (int i = 0; i < 4; ++i) {
+        q.data_as<float>()[i] = float(i);
+        k.data_as<float>()[i] = float(i);
+        v.data_as<float>()[i] = float(i + 1);
+    }
+    auto out_nc = scaled_dot_product_attention(q, k, v, false);
+    auto out_c  = scaled_dot_product_attention(q, k, v, true);
+    for (int i = 0; i < 4; ++i)
+        REQUIRE(out_nc.data_as<float>()[i] ==
+                Catch::Approx(out_c.data_as<float>()[i]).epsilon(1e-6));
+}
