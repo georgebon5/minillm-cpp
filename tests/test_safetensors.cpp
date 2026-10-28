@@ -114,3 +114,67 @@ TEST_CASE("SafetensorsFile: nonexistent file throws", "[safetensors][mmap]") {
     REQUIRE_THROWS_AS(SafetensorsFile("/tmp/does_not_exist_xyz.safetensors"),
                       std::runtime_error);
 }
+
+// ── BF16 conversion tests ─────────────────────────────────────────────────────
+
+// Known BF16 bit patterns (top 16 bits of the F32 representation):
+//   1.0f  = 0x3F800000  →  BF16 = 0x3F80
+//   2.0f  = 0x40000000  →  BF16 = 0x4000
+//  -0.5f  = 0xBF000000  →  BF16 = 0xBF00
+static std::vector<uint8_t> make_bf16_safetensors() {
+    // 3 BF16 values = 6 bytes of data
+    const std::string json =
+        R"({"w":{"dtype":"BF16","shape":[3],"data_offsets":[0,6]}})";
+    uint64_t header_size = json.size();
+
+    // BF16 values stored as little-endian uint16
+    std::vector<uint16_t> bf16_vals = {0x3F80, 0x4000, 0xBF00};
+
+    std::vector<uint8_t> blob(8 + header_size + 6);
+    for (int i = 0; i < 8; ++i)
+        blob[i] = static_cast<uint8_t>((header_size >> (8 * i)) & 0xff);
+    std::memcpy(blob.data() + 8, json.data(), header_size);
+    std::memcpy(blob.data() + 8 + header_size, bf16_vals.data(), 6);
+    return blob;
+}
+
+TEST_CASE("tensor_f32: BF16 is correctly converted to F32", "[safetensors][bf16]") {
+    auto path = write_temp_file(make_bf16_safetensors());
+    {
+        SafetensorsFile sf(path);
+        Tensor t = sf.tensor_f32("w");
+
+        REQUIRE(t.dtype()  == DType::F32);
+        REQUIRE(t.numel()  == 3);
+        REQUIRE(t.at<float>({0}) == 1.0f);
+        REQUIRE(t.at<float>({1}) == 2.0f);
+        REQUIRE(t.at<float>({2}) == -0.5f);
+    }
+    std::remove(path.c_str());
+}
+
+TEST_CASE("tensor_f32: F32 tensor is copied correctly", "[safetensors][f32]") {
+    auto blob = make_test_safetensors();   // F32 tensor {1,2,3,4}
+    auto path = write_temp_file(blob);
+    {
+        SafetensorsFile sf(path);
+        Tensor t = sf.tensor_f32("t");
+        REQUIRE(t.owns_data());
+        REQUIRE(t.at<float>({0}) == 1.f);
+        REQUIRE(t.at<float>({3}) == 4.f);
+    }
+    std::remove(path.c_str());
+}
+
+TEST_CASE("load_all_f32: loads every tensor", "[safetensors][f32]") {
+    auto blob = make_test_safetensors();
+    auto path = write_temp_file(blob);
+    {
+        SafetensorsFile sf(path);
+        auto all = sf.load_all_f32();
+        REQUIRE(all.size() == 1);
+        REQUIRE(all.count("t") == 1);
+        REQUIRE(all.at("t").dtype() == DType::F32);
+    }
+    std::remove(path.c_str());
+}

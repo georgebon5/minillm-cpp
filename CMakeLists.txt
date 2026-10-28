@@ -32,6 +32,7 @@ FetchContent_MakeAvailable(nlohmann_json)
 add_library(minillm STATIC
     src/tensor.cpp
     src/safetensors.cpp
+    src/model_config.cpp
 )
 target_include_directories(minillm PUBLIC ${PROJECT_SOURCE_DIR}/include)
 target_compile_features(minillm PUBLIC cxx_std_20)

@@ -110,4 +110,46 @@ Tensor SafetensorsFile::tensor(const std::string& name) const {
     return Tensor::from_data(data_ptr, info.shape, info.dtype);
 }
 
+// ── BF16 → F32 conversion ─────────────────────────────────────────────────────
+
+// BF16 is the top 16 bits of F32 (same exponent, fewer mantissa bits).
+// Conversion: zero-extend to 32 bits and reinterpret.
+// memcpy is required here — casting via pointer would be UB (strict aliasing).
+static float bf16_to_f32(uint16_t bf16) {
+    uint32_t bits = uint32_t(bf16) << 16;
+    float f;
+    std::memcpy(&f, &bits, sizeof(f));
+    return f;
+}
+
+Tensor SafetensorsFile::tensor_f32(const std::string& name) const {
+    Tensor raw = tensor(name);
+
+    if (raw.dtype() == DType::F32) {
+        Tensor out(raw.shape(), DType::F32);
+        std::memcpy(out.data(), raw.data(), raw.nbytes());
+        return out;
+    }
+
+    if (raw.dtype() == DType::BF16) {
+        Tensor out(raw.shape(), DType::F32);
+        const auto* src = raw.data_as<uint16_t>();
+              auto* dst = out.data_as<float>();
+        const size_t n  = raw.numel();
+        for (size_t i = 0; i < n; ++i)
+            dst[i] = bf16_to_f32(src[i]);
+        return out;
+    }
+
+    throw std::runtime_error("tensor_f32: unsupported dtype for tensor '" + name + "'");
+}
+
+std::unordered_map<std::string, Tensor> SafetensorsFile::load_all_f32() const {
+    std::unordered_map<std::string, Tensor> result;
+    result.reserve(tensor_map_.size());
+    for (const auto& [name, _] : tensor_map_)
+        result.emplace(name, tensor_f32(name));
+    return result;
+}
+
 } // namespace minillm

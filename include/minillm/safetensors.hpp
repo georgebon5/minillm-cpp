@@ -35,9 +35,17 @@ public:
     SafetensorsFile(const SafetensorsFile&) = delete;
     SafetensorsFile& operator=(const SafetensorsFile&) = delete;
 
-    // Returns a non-owning Tensor view into the mmap'd data.
+    // Returns a non-owning Tensor view into the mmap'd data (original dtype).
     // Throws std::out_of_range if `name` is not found.
     Tensor tensor(const std::string& name) const;
+
+    // Returns an owning F32 Tensor.
+    // BF16 tensors are converted element-wise; F32 tensors are copied.
+    // Throws std::runtime_error for unsupported dtypes.
+    Tensor tensor_f32(const std::string& name) const;
+
+    // Loads every tensor in the file as F32 into one map.
+    std::unordered_map<std::string, Tensor> load_all_f32() const;
 
     bool has(const std::string& name) const { return tensor_map_.count(name) > 0; }
 
