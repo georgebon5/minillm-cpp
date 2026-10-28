@@ -16,6 +16,10 @@ include(Catch)
 function(add_minillm_test name)
     add_executable(${name} ${name}.cpp)
     target_link_libraries(${name} PRIVATE Catch2::Catch2WithMain minillm)
+    # Expose the repo root so tests can locate model files and reference data.
+    target_compile_definitions(${name} PRIVATE
+        MINILLM_PROJECT_ROOT="${CMAKE_SOURCE_DIR}"
+    )
     catch_discover_tests(${name})
 endfunction()
 
@@ -24,3 +28,4 @@ add_minillm_test(test_smoke)
 add_minillm_test(test_tensor)
 add_minillm_test(test_safetensors)
 add_minillm_test(test_model_config)
+add_minillm_test(test_loader_integration)
