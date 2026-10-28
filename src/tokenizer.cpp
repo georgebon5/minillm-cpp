@@ -200,6 +200,54 @@ static std::vector<std::string> bpe_word(
     return {tokens.begin(), tokens.end()};
 }
 
+// ── BPE decode ────────────────────────────────────────────────────────────────
+
+// Inverse of byte_to_bpe_char: build a map from BPE char string → original byte.
+static const std::unordered_map<std::string, uint8_t>& bpe_char_to_byte_map() {
+    static std::unordered_map<std::string, uint8_t> m = []() {
+        std::unordered_map<std::string, uint8_t> t;
+        t.reserve(256);
+        for (int b = 0; b < 256; ++b)
+            t[byte_to_bpe_char(static_cast<uint8_t>(b))] = static_cast<uint8_t>(b);
+        return t;
+    }();
+    return m;
+}
+
+std::string decode(const Tokenizer& tok, std::span<const int32_t> ids) {
+    // Step 1: concatenate token strings.
+    std::string bpe_text;
+    for (int32_t id : ids) {
+        if (id < 0 || static_cast<size_t>(id) >= tok.id_to_token.size()) continue;
+        bpe_text += tok.id_to_token[static_cast<size_t>(id)];
+    }
+
+    // Step 2: invert byte-level encoding codepoint-by-codepoint.
+    const auto& inv = bpe_char_to_byte_map();
+    std::string out;
+    out.reserve(bpe_text.size());
+    size_t i = 0;
+    const auto* p = reinterpret_cast<const uint8_t*>(bpe_text.data());
+    while (i < bpe_text.size()) {
+        // Determine UTF-8 codepoint length.
+        uint8_t c = p[i];
+        size_t len = 1;
+        if      ((c & 0xE0) == 0xC0) len = 2;
+        else if ((c & 0xF0) == 0xE0) len = 3;
+        else if ((c & 0xF8) == 0xF0) len = 4;
+
+        std::string cp = bpe_text.substr(i, len);
+        auto it = inv.find(cp);
+        if (it != inv.end())
+            out += static_cast<char>(it->second);
+        // Unknown codepoint (e.g. a true Unicode char in a special token): keep as-is.
+        else
+            out += cp;
+        i += len;
+    }
+    return out;
+}
+
 std::vector<int32_t> encode(const Tokenizer& tok, std::string_view text) {
     std::vector<int32_t> ids;
     for (const std::string& word : pretokenize(text)) {

@@ -1,5 +1,6 @@
 #pragma once
 #include <cstdint>
+#include <span>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -34,5 +35,8 @@ Tokenizer load_tokenizer(std::string_view path);
 
 // Encode plain text → token ids (no BOS/EOS added).
 std::vector<int32_t> encode(const Tokenizer& tok, std::string_view text);
+
+// Decode token ids → plain text (skips unknown ids).
+std::string decode(const Tokenizer& tok, std::span<const int32_t> ids);
 
 } // namespace minillm

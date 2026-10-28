@@ -146,3 +146,31 @@ TEST_CASE("encode: SmolLM2 tokenizer non-empty output", "[tokenizer][integration
     for (int32_t id : ids)
         REQUIRE(id < tok.vocab_size());
 }
+
+// ── decode tests ──────────────────────────────────────────────────────────────
+TEST_CASE("decode: empty ids → empty string", "[tokenizer][decode]") {
+    Tokenizer tok = parse_tokenizer(kEncodeJson);
+    std::vector<int32_t> ids;
+    REQUIRE(decode(tok, ids).empty());
+}
+
+TEST_CASE("decode: single token id", "[tokenizer][decode]") {
+    // id 5 = "hi" (BPE chars h+i) → raw bytes 'h','i' → "hi"
+    Tokenizer tok = parse_tokenizer(kEncodeJson);
+    std::vector<int32_t> ids = {5};
+    REQUIRE(decode(tok, ids) == "hi");
+}
+
+TEST_CASE("decode: space-prefixed token", "[tokenizer][decode]") {
+    // id 14 = "Ġthere" → Ġ=space then 't','h','e','r','e' → " there"
+    Tokenizer tok = parse_tokenizer(kEncodeJson);
+    std::vector<int32_t> ids = {14};
+    REQUIRE(decode(tok, ids) == " there");
+}
+
+TEST_CASE("decode: two tokens round-trips encode", "[tokenizer][decode]") {
+    Tokenizer tok = parse_tokenizer(kEncodeJson);
+    std::string text = "hi there";
+    auto ids = encode(tok, text);
+    REQUIRE(decode(tok, ids) == text);
+}
