@@ -21,3 +21,4 @@ endfunction()
 
 # ── Tests (one line per test file added each milestone) ───────────────────────
 add_minillm_test(test_smoke)
+add_minillm_test(test_tensor)

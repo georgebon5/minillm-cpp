@@ -18,9 +18,11 @@ elseif(CMAKE_BUILD_TYPE STREQUAL "Release")
 endif()
 
 # ── Core library ──────────────────────────────────────────────────────────────
-# INTERFACE for now (header-only); will become STATIC in Milestone 1.
-add_library(minillm INTERFACE)
-target_include_directories(minillm INTERFACE ${PROJECT_SOURCE_DIR}/include)
+add_library(minillm STATIC
+    src/tensor.cpp
+)
+target_include_directories(minillm PUBLIC ${PROJECT_SOURCE_DIR}/include)
+target_compile_features(minillm PUBLIC cxx_std_20)
 
 # ── Tests ─────────────────────────────────────────────────────────────────────
 enable_testing()
