@@ -1,0 +1,14 @@
+build/
+.cache/
+__pycache__/
+*.pyc
+tools/__pycache__/
+*.safetensors
+*.bin
+*.gguf
+models/
+*.o
+*.a
+*.dylib
+.DS_Store
+.env
