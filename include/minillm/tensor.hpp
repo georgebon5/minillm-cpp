@@ -8,17 +8,19 @@
 namespace minillm {
 
 enum class DType : uint8_t {
-    F32,  // 4 bytes per element
-    I8,   // 1 byte per element
-    I4,   // 0.5 bytes per element (two nibbles packed per byte)
+    F32,   // 4 bytes per element
+    BF16,  // 2 bytes per element (brain float 16)
+    I8,    // 1 byte per element
+    I4,    // 0.5 bytes per element (two nibbles packed per byte)
 };
 
 // Bytes needed to store `numel` elements of `dtype`.
 inline size_t storage_bytes(size_t numel, DType dtype) {
     switch (dtype) {
-        case DType::F32: return numel * sizeof(float);
-        case DType::I8:  return numel * sizeof(int8_t);
-        case DType::I4:  return (numel + 1) / 2;
+        case DType::F32:  return numel * sizeof(float);
+        case DType::BF16: return numel * 2;
+        case DType::I8:   return numel * sizeof(int8_t);
+        case DType::I4:   return (numel + 1) / 2;
     }
     return 0;
 }
