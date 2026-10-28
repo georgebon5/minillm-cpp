@@ -32,4 +32,7 @@ Tokenizer parse_tokenizer(std::string_view json_text);
 // Load and parse a tokenizer.json file from disk.
 Tokenizer load_tokenizer(std::string_view path);
 
+// Encode plain text → token ids (no BOS/EOS added).
+std::vector<int32_t> encode(const Tokenizer& tok, std::string_view text);
+
 } // namespace minillm
