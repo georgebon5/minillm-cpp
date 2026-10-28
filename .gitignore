@@ -12,3 +12,5 @@ models/
 *.dylib
 .DS_Store
 .env
+tools/reference_tensors.json
+tools/.venv/
