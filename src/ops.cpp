@@ -251,4 +251,76 @@ Tensor scaled_dot_product_attention(const Tensor& q,
     return out;
 }
 
+// ── GQA ───────────────────────────────────────────────────────────────────────
+
+// Copy columns [col_start, col_start+width) from every row of x.
+// Returns a new owning [n_rows, width] F32 tensor.
+static Tensor col_slice(const Tensor& x, size_t col_start, size_t width) {
+    assert(x.ndim() == 2 && x.dtype() == DType::F32);
+    const size_t n_rows = x.shape()[0];
+    const size_t n_cols = x.shape()[1];
+    assert(col_start + width <= n_cols);
+
+    Tensor out({n_rows, width}, DType::F32);
+    const float* src = x.data_as<float>();
+    float*       dst = out.data_as<float>();
+    for (size_t r = 0; r < n_rows; ++r)
+        std::memcpy(dst + r * width,
+                    src + r * n_cols + col_start,
+                    width * sizeof(float));
+    return out;
+}
+
+Tensor gqa_attention(const Tensor& x,
+                     const Tensor& Wq,
+                     const Tensor& Wk,
+                     const Tensor& Wv,
+                     const Tensor& Wo,
+                     const RopeCache& rope,
+                     int n_heads,
+                     int n_kv_heads,
+                     int pos_offset) {
+    assert(x.ndim() == 2 && x.dtype() == DType::F32);
+    assert(n_heads % n_kv_heads == 0);
+
+    const size_t seq_len   = x.shape()[0];
+    const size_t hidden    = x.shape()[1];
+    const size_t head_dim  = Wq.shape()[0] / static_cast<size_t>(n_heads);
+    const int    kv_groups = n_heads / n_kv_heads;
+
+    // 1. Linear projections
+    Tensor Q = linear(x, Wq);   // [seq, n_heads    * head_dim]
+    Tensor K = linear(x, Wk);   // [seq, n_kv_heads * head_dim]
+    Tensor V = linear(x, Wv);   // [seq, n_kv_heads * head_dim]
+
+    // 2. Apply RoPE in-place
+    rope_apply(Q, rope, pos_offset);
+    rope_apply(K, rope, pos_offset);
+
+    // 3. Per-head attention, results written into attn_out
+    Tensor attn_out({seq_len, static_cast<size_t>(n_heads) * head_dim}, DType::F32);
+    float* out_p = attn_out.data_as<float>();
+
+    for (int h = 0; h < n_heads; ++h) {
+        const size_t kv_h = static_cast<size_t>(h / kv_groups);
+
+        Tensor q_h  = col_slice(Q, static_cast<size_t>(h)  * head_dim, head_dim);
+        Tensor k_h  = col_slice(K, kv_h * head_dim, head_dim);
+        Tensor v_h  = col_slice(V, kv_h * head_dim, head_dim);
+
+        Tensor out_h = scaled_dot_product_attention(q_h, k_h, v_h, /*causal=*/true);
+
+        // Write head output into the right column slice of attn_out
+        const float* src = out_h.data_as<float>();
+        for (size_t s = 0; s < seq_len; ++s)
+            std::memcpy(out_p + s * static_cast<size_t>(n_heads) * head_dim
+                               + static_cast<size_t>(h) * head_dim,
+                        src + s * head_dim,
+                        head_dim * sizeof(float));
+    }
+
+    // 4. Output projection
+    return linear(attn_out, Wo);
+}
+
 } // namespace minillm

@@ -69,4 +69,26 @@ Tensor scaled_dot_product_attention(const Tensor& q,
                                      const Tensor& v,
                                      bool causal = false);
 
+// Grouped-Query Attention (GQA) layer — full multi-head projection + attention + output projection.
+//
+//   x          : [seq_len, hidden_size]            F32
+//   Wq         : [n_heads     * head_dim, hidden]  F32
+//   Wk         : [n_kv_heads  * head_dim, hidden]  F32
+//   Wv         : [n_kv_heads  * head_dim, hidden]  F32
+//   Wo         : [hidden,  n_heads * head_dim]      F32
+//   rope       : precomputed cos/sin tables
+//   n_heads    : number of query heads
+//   n_kv_heads : number of key/value heads (n_heads / n_kv_heads = kv_groups)
+//   pos_offset : sequence position of the first token in x (0 for prefill)
+//   returns    : [seq_len, hidden_size]  F32  (owning)
+Tensor gqa_attention(const Tensor& x,
+                     const Tensor& Wq,
+                     const Tensor& Wk,
+                     const Tensor& Wv,
+                     const Tensor& Wo,
+                     const RopeCache& rope,
+                     int n_heads,
+                     int n_kv_heads,
+                     int pos_offset = 0);
+
 } // namespace minillm

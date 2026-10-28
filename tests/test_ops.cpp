@@ -442,3 +442,61 @@ TEST_CASE("sdp_attention: causal=false matches causal=true for seq_len=1", "[ops
         REQUIRE(out_nc.data_as<float>()[i] ==
                 Catch::Approx(out_c.data_as<float>()[i]).epsilon(1e-6));
 }
+
+// ── GQA attention ─────────────────────────────────────────────────────────────
+
+// Build a tiny GQA setup:  hidden=4, n_heads=2, n_kv_heads=1, head_dim=2
+static void make_gqa_weights(Tensor& Wq, Tensor& Wk, Tensor& Wv, Tensor& Wo) {
+    // Wq: [4, 4], Wk: [2, 4], Wv: [2, 4], Wo: [4, 4]
+    Wq = Tensor({4, 4}, DType::F32);
+    Wk = Tensor({2, 4}, DType::F32);
+    Wv = Tensor({2, 4}, DType::F32);
+    Wo = Tensor({4, 4}, DType::F32);
+    // Identity-like initialisation: set diagonal to 1
+    auto set_eye = [](Tensor& t) {
+        size_t n = std::min(t.shape()[0], t.shape()[1]);
+        for (size_t i = 0; i < n; ++i)
+            t.data_as<float>()[i * t.shape()[1] + i] = 1.f;
+    };
+    set_eye(Wq); set_eye(Wk); set_eye(Wv); set_eye(Wo);
+}
+
+TEST_CASE("gqa_attention: output shape", "[ops][gqa]") {
+    Tensor Wq, Wk, Wv, Wo;
+    make_gqa_weights(Wq, Wk, Wv, Wo);
+    auto rope = build_rope_cache(16, /*head_dim=*/2, 10000.f);
+
+    Tensor x({3, 4}, DType::F32);
+    for (size_t i = 0; i < 12; ++i) x.data_as<float>()[i] = float(i) * 0.1f;
+
+    auto out = gqa_attention(x, Wq, Wk, Wv, Wo, rope, /*n_heads=*/2, /*n_kv_heads=*/1);
+    REQUIRE(out.shape() == std::vector<size_t>{3, 4});
+}
+
+TEST_CASE("gqa_attention: output is finite", "[ops][gqa]") {
+    Tensor Wq, Wk, Wv, Wo;
+    make_gqa_weights(Wq, Wk, Wv, Wo);
+    auto rope = build_rope_cache(16, 2, 10000.f);
+
+    Tensor x({4, 4}, DType::F32);
+    for (size_t i = 0; i < 16; ++i) x.data_as<float>()[i] = float(i + 1) * 0.01f;
+
+    auto out = gqa_attention(x, Wq, Wk, Wv, Wo, rope, 2, 1);
+    for (size_t i = 0; i < out.numel(); ++i)
+        REQUIRE(std::isfinite(out.data_as<float>()[i]));
+}
+
+TEST_CASE("gqa_attention: single token output is finite", "[ops][gqa]") {
+    Tensor Wq, Wk, Wv, Wo;
+    make_gqa_weights(Wq, Wk, Wv, Wo);
+    auto rope = build_rope_cache(16, 2, 10000.f);
+
+    Tensor x({1, 4}, DType::F32);
+    x.data_as<float>()[0] = 1.f; x.data_as<float>()[1] = 0.f;
+    x.data_as<float>()[2] = 0.f; x.data_as<float>()[3] = 1.f;
+
+    auto out = gqa_attention(x, Wq, Wk, Wv, Wo, rope, 2, 1, /*pos_offset=*/5);
+    REQUIRE(out.shape() == std::vector<size_t>{1, 4});
+    for (size_t i = 0; i < out.numel(); ++i)
+        REQUIRE(std::isfinite(out.data_as<float>()[i]));
+}
