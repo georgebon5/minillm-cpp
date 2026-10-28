@@ -251,6 +251,17 @@ Tensor scaled_dot_product_attention(const Tensor& q,
     return out;
 }
 
+// ── Elementwise ops ───────────────────────────────────────────────────────────
+
+void add_inplace(Tensor& a, const Tensor& b) {
+    assert(a.dtype() == DType::F32 && b.dtype() == DType::F32);
+    assert(a.shape() == b.shape());
+    float*       ap = a.data_as<float>();
+    const float* bp = b.data_as<float>();
+    const size_t n  = a.numel();
+    for (size_t i = 0; i < n; ++i) ap[i] += bp[i];
+}
+
 // ── MLP ───────────────────────────────────────────────────────────────────────
 
 Tensor swiglu_mlp(const Tensor& x,

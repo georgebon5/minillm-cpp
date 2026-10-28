@@ -69,6 +69,11 @@ Tensor scaled_dot_product_attention(const Tensor& q,
                                      const Tensor& v,
                                      bool causal = false);
 
+// ── Elementwise ops ───────────────────────────────────────────────────────────
+
+// a[i] += b[i]  in-place.  Both tensors must be F32 with the same shape.
+void add_inplace(Tensor& a, const Tensor& b);
+
 // ── MLP ───────────────────────────────────────────────────────────────────────
 
 // SiLU activation: silu(x) = x * sigmoid(x) = x / (1 + exp(-x))
