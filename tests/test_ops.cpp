@@ -140,3 +140,68 @@ TEST_CASE("rms_norm: zero vector with eps does not crash", "[ops][norm]") {
     for (size_t i = 0; i < 4; ++i)
         REQUIRE(std::isfinite(y.data_as<float>()[i]));
 }
+
+// ── Linear ────────────────────────────────────────────────────────────────────
+
+TEST_CASE("linear: output shape", "[ops][linear]") {
+    Tensor x({3, 4}, DType::F32);
+    Tensor W({5, 4}, DType::F32);
+    Tensor y = linear(x, W);
+    REQUIRE(y.shape() == std::vector<size_t>{3, 5});
+}
+
+TEST_CASE("linear: identity weight", "[ops][linear]") {
+    // W = I_2 → y = x
+    Tensor x({2, 2}, DType::F32);
+    float* xp = x.data_as<float>();
+    xp[0] = 1.f; xp[1] = 2.f;
+    xp[2] = 3.f; xp[3] = 4.f;
+
+    Tensor W({2, 2}, DType::F32);
+    float* Wp = W.data_as<float>();
+    Wp[0] = 1.f; Wp[1] = 0.f;
+    Wp[2] = 0.f; Wp[3] = 1.f;
+
+    Tensor y = linear(x, W);
+    REQUIRE(y.at<float>({0, 0}) == Catch::Approx(1.f));
+    REQUIRE(y.at<float>({0, 1}) == Catch::Approx(2.f));
+    REQUIRE(y.at<float>({1, 0}) == Catch::Approx(3.f));
+    REQUIRE(y.at<float>({1, 1}) == Catch::Approx(4.f));
+}
+
+TEST_CASE("linear: known matrix multiply", "[ops][linear]") {
+    // x = [[1,2,3]]  W = [[1,1,1],[2,2,2]]
+    // y[0,0] = 1+2+3 = 6,  y[0,1] = 2+4+6 = 12
+    Tensor x({1, 3}, DType::F32);
+    x.data_as<float>()[0] = 1.f;
+    x.data_as<float>()[1] = 2.f;
+    x.data_as<float>()[2] = 3.f;
+
+    Tensor W({2, 3}, DType::F32);
+    for (int i = 0; i < 3; ++i) W.data_as<float>()[i]     = 1.f;
+    for (int i = 0; i < 3; ++i) W.data_as<float>()[3 + i] = 2.f;
+
+    Tensor y = linear(x, W);
+    REQUIRE(y.at<float>({0, 0}) == Catch::Approx(6.f));
+    REQUIRE(y.at<float>({0, 1}) == Catch::Approx(12.f));
+}
+
+TEST_CASE("linear: bias is added", "[ops][linear]") {
+    // Same x, W as above + bias [10, 20]
+    Tensor x({1, 3}, DType::F32);
+    x.data_as<float>()[0] = 1.f;
+    x.data_as<float>()[1] = 2.f;
+    x.data_as<float>()[2] = 3.f;
+
+    Tensor W({2, 3}, DType::F32);
+    for (int i = 0; i < 3; ++i) W.data_as<float>()[i]     = 1.f;
+    for (int i = 0; i < 3; ++i) W.data_as<float>()[3 + i] = 2.f;
+
+    Tensor b({2}, DType::F32);
+    b.data_as<float>()[0] = 10.f;
+    b.data_as<float>()[1] = 20.f;
+
+    Tensor y = linear(x, W, &b);
+    REQUIRE(y.at<float>({0, 0}) == Catch::Approx(16.f));
+    REQUIRE(y.at<float>({0, 1}) == Catch::Approx(32.f));
+}

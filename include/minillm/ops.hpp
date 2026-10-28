@@ -22,4 +22,13 @@ Tensor embedding_lookup(const Tensor& weight,
 //   returns: same shape as x                  F32  (owning)
 Tensor rms_norm(const Tensor& x, const Tensor& weight, float eps);
 
+// ── Linear projection ─────────────────────────────────────────────────────────
+
+// Computes y = x @ W^T + b  (bias is optional).
+//   x : [seq_len, in_features]     F32
+//   W : [out_features, in_features] F32  (weight, stored as rows of output neurons)
+//   b : [out_features]              F32  (pass nullptr for no bias)
+//   returns: [seq_len, out_features] F32  (owning)
+Tensor linear(const Tensor& x, const Tensor& W, const Tensor* b = nullptr);
+
 } // namespace minillm
