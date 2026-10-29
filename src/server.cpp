@@ -283,6 +283,51 @@ static const char* kIndexHtml = R"HTML(<!doctype html>
     border-radius: 1px; opacity: 0.75;
   }
 
+  /* ── top-K probability panel ─────────────────────────────────────────── */
+  .topk {
+    margin-top: .75rem;
+    background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
+    padding: .9rem 1rem;
+    display: none;
+  }
+  .topk.visible { display: block; animation: fadeIn .3s ease-out; }
+  .topk .topk-head {
+    display: flex; justify-content: space-between; align-items: baseline;
+    margin-bottom: .6rem;
+  }
+  .topk .topk-head .title {
+    font-size: .78rem; font-weight: 500; color: var(--fg);
+  }
+  .topk .topk-head .ctx { color: var(--muted); font-size: .72rem; font-family: var(--mono); }
+  .topk-row {
+    display: grid; grid-template-columns: 1.5rem minmax(0, 10rem) 1fr 3.5rem;
+    gap: .6rem; align-items: center;
+    padding: .3rem 0; font-family: var(--mono); font-size: .78rem;
+  }
+  .topk-row .rank { color: var(--muted); font-size: .7rem; }
+  .topk-row .tok {
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    color: var(--fg); background: var(--surface-2); border-radius: 3px;
+    padding: 1px 6px;
+  }
+  .topk-row.chosen .tok {
+    color: var(--accent); background: var(--accent-dim);
+    box-shadow: inset 0 0 0 1px rgba(124, 111, 245, 0.35);
+  }
+  .topk-row .bar-track {
+    height: 6px; background: var(--surface-2); border-radius: 3px; overflow: hidden;
+  }
+  .topk-row .bar-fill {
+    height: 100%; background: var(--muted); border-radius: 3px;
+    transition: width .35s cubic-bezier(.4, 0, .2, 1);
+  }
+  .topk-row.chosen .bar-fill { background: var(--accent); }
+  .topk-row .pct {
+    color: var(--fg-dim); font-variant-numeric: tabular-nums;
+    text-align: right; font-size: .75rem;
+  }
+  .topk-row.chosen .pct { color: var(--accent); }
+
   /* ── compare mode ────────────────────────────────────────────────────── */
   .compare { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1rem; margin-top: 1.25rem; }
   .compare .col {
@@ -415,6 +460,14 @@ static const char* kIndexHtml = R"HTML(<!doctype html>
     <div class="spark" id="spark"></div>
   </div>
 
+  <div class="topk" id="topk">
+    <div class="topk-head">
+      <span class="title">Top candidates at step <span id="topkStep">—</span></span>
+      <span class="ctx">top-5 softmax probabilities</span>
+    </div>
+    <div id="topkRows"></div>
+  </div>
+
   <div class="compare" id="compare" style="display:none"></div>
 </main>
 
@@ -511,6 +564,8 @@ function streamGenerate() {
       flash.replaceWith(document.createTextNode(t));
     }, 500);
 
+    if (d.topk) renderTopK(d.topk, d.id, d.n);
+
     const elapsed = (performance.now() - t0) / 1000;
     const tps = d.n / elapsed;
     pushSpark(tps);
@@ -581,6 +636,28 @@ async function compareAll() {
   } finally {
     compareBtn.disabled = false; goBtn.disabled = false;
   }
+}
+
+// Render top-K candidates as a bar chart.
+function renderTopK(items, chosenId, step) {
+  const panel = $('topk');
+  const rows  = $('topkRows');
+  panel.classList.add('visible');
+  $('topkStep').textContent = step;
+
+  const maxP = Math.max(...items.map(x => x.p));
+  rows.innerHTML = items.map((x, i) => {
+    const picked = x.id === chosenId;
+    const w = (x.p / maxP * 100).toFixed(1);
+    const label = x.token.replace(/\n/g, '␤').replace(/\t/g, '→').replace(/ /g, '·');
+    return `
+      <div class="topk-row ${picked ? 'chosen' : ''}">
+        <span class="rank">#${i+1}</span>
+        <span class="tok">${escapeHtml(label)}</span>
+        <div class="bar-track"><div class="bar-fill" style="width:${w}%"></div></div>
+        <span class="pct">${(x.p*100).toFixed(1)}%</span>
+      </div>`;
+  }).join('');
 }
 
 function escapeHtml(s) {
@@ -917,20 +994,45 @@ static void handle_stream(ServerState& st, int sock, const std::string& qs) {
         return scored[k - 1].second;
     };
 
+    // Compute top-K softmax probabilities + decoded strings from logits.
+    // Used by the UI to show the model's "thought process" per step.
+    auto topk_probs = [&](const float* lp, int K = 5) -> json {
+        std::vector<std::pair<float, int32_t>> scored(vocab);
+        for (size_t v = 0; v < vocab; ++v) scored[v] = { lp[v], static_cast<int32_t>(v) };
+        std::partial_sort(scored.begin(), scored.begin() + K, scored.end(),
+                          [](auto& a, auto& b){ return a.first > b.first; });
+        float max_v = scored[0].first; float sum = 0.f;
+        std::vector<float> probs(K);
+        for (int i = 0; i < K; ++i) { probs[i] = std::exp(scored[i].first - max_v); sum += probs[i]; }
+        for (auto& p : probs) p /= sum;
+
+        json arr = json::array();
+        for (int i = 0; i < K; ++i) {
+            std::vector<int32_t> one = { scored[i].second };
+            std::string s = decode(st.tok, one);
+            // Replace invalid UTF-8 fragments so JSON serializes cleanly.
+            if (utf8_safe_len(s) < s.size()) s = s.substr(0, utf8_safe_len(s));
+            arr.push_back({ {"token", s}, {"id", scored[i].second}, {"p", probs[i]} });
+        }
+        return arr;
+    };
+
     for (int step = 0; step < max_tokens; ++step) {
-        int32_t next_id = sample(logits.data_as<float>());
+        const float* lp = logits.data_as<float>();
+        json candidates = topk_probs(lp, 5);
+        int32_t next_id = sample(lp);
 
         gen_ids.push_back(next_id);
 
         // Decode cumulative, trim trailing incomplete UTF-8, emit only the
-        // completed suffix. Byte-level BPE may split a codepoint across tokens
-        // (e.g. Greek letters = 2 bytes); we buffer until it's complete.
+        // completed suffix. Byte-level BPE may split a codepoint across tokens.
         std::string full = decode(st.tok, gen_ids);
         size_t safe = utf8_safe_len(full);
         if (safe > prev_text.size()) {
             std::string delta = full.substr(prev_text.size(), safe - prev_text.size());
             prev_text = full.substr(0, safe);
-            json ev = {{"delta",delta},{"id",next_id},{"n",gen_ids.size()}};
+            json ev = {{"delta",delta},{"id",next_id},{"n",gen_ids.size()},
+                       {"topk", candidates}};
             emit("token", safe_dump(ev));
         }
 

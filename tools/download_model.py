@@ -5,7 +5,8 @@ import argparse
 from pathlib import Path
 from huggingface_hub import snapshot_download
 
-MODEL_ID = "HuggingFaceTB/SmolLM2-135M"
+import os
+MODEL_ID = os.environ.get("MODEL_ID", "HuggingFaceTB/SmolLM2-135M")
 
 REQUIRED_FILES = [
     "model.safetensors",
