@@ -48,6 +48,9 @@ target_link_libraries(minillm-generate PRIVATE minillm)
 add_executable(minillm-perplexity src/perplexity.cpp)
 target_link_libraries(minillm-perplexity PRIVATE minillm)
 
+add_executable(minillm-serve src/server.cpp)
+target_link_libraries(minillm-serve PRIVATE minillm nlohmann_json::nlohmann_json)
+
 # ── Tests ─────────────────────────────────────────────────────────────────────
 enable_testing()
 add_subdirectory(tests)
