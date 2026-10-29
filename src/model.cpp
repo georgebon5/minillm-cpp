@@ -219,14 +219,42 @@ Tensor forward_one(const ModelWeights& w,
 
 // ── Greedy generation loop ────────────────────────────────────────────────────
 
+// Apply repetition penalty: for each recently-seen token t,
+//   logits[t] /= penalty   (if logits[t] > 0)
+//   logits[t] *= penalty   (if logits[t] <= 0)
+// Discourages re-emitting tokens that appeared in the last `window` positions.
+// Writes into `scratch` so the caller's logit buffer stays untouched.
+static void apply_rep_penalty(const float* logits, size_t vocab,
+                              const std::vector<int32_t>& history,
+                              const SamplingParams& sp,
+                              std::vector<float>& scratch) {
+    scratch.assign(logits, logits + vocab);
+    if (sp.rep_penalty <= 1.0f || sp.rep_window <= 0) return;
+
+    const size_t start = history.size() > static_cast<size_t>(sp.rep_window)
+                         ? history.size() - static_cast<size_t>(sp.rep_window)
+                         : 0;
+    for (size_t i = start; i < history.size(); ++i) {
+        int32_t t = history[i];
+        if (t < 0 || static_cast<size_t>(t) >= vocab) continue;
+        scratch[t] = (scratch[t] > 0.f) ? scratch[t] / sp.rep_penalty
+                                        : scratch[t] * sp.rep_penalty;
+    }
+}
+
 // Pick the next token given raw logits + sampling params.
 // temperature == 0 → greedy argmax; otherwise top-K softmax sampling.
 static int32_t sample_next(const float* logits, size_t vocab,
-                           const SamplingParams& sp, std::mt19937& rng) {
+                           const SamplingParams& sp, std::mt19937& rng,
+                           const std::vector<int32_t>& history,
+                           std::vector<float>& scratch) {
+    apply_rep_penalty(logits, vocab, history, sp, scratch);
+    const float* lp = scratch.data();
+
     if (sp.temperature <= 0.0f) {
-        int32_t best = 0; float best_val = logits[0];
+        int32_t best = 0; float best_val = lp[0];
         for (size_t i = 1; i < vocab; ++i)
-            if (logits[i] > best_val) { best_val = logits[i]; best = static_cast<int32_t>(i); }
+            if (lp[i] > best_val) { best_val = lp[i]; best = static_cast<int32_t>(i); }
         return best;
     }
 
@@ -235,7 +263,7 @@ static int32_t sample_next(const float* logits, size_t vocab,
 
     std::vector<std::pair<float, int32_t>> scored(vocab);
     for (size_t i = 0; i < vocab; ++i)
-        scored[i] = { logits[i] * inv, static_cast<int32_t>(i) };
+        scored[i] = { lp[i] * inv, static_cast<int32_t>(i) };
 
     std::partial_sort(scored.begin(), scored.begin() + k, scored.end(),
                       [](auto& a, auto& b){ return a.first > b.first; });
@@ -278,9 +306,16 @@ std::vector<int32_t> generate(const ModelWeights&       w,
 
     std::mt19937 rng(sampling.seed ? sampling.seed : std::random_device{}());
 
+    // History includes prompt + already-generated for repetition penalty.
+    std::vector<int32_t> history(prompt_ids.begin(), prompt_ids.end());
+    std::vector<float>   scratch;
+    scratch.reserve(vocab);
+
     for (int step = 0; step < max_new_tokens; ++step) {
-        int32_t next_id = sample_next(logits.data_as<float>(), vocab, sampling, rng);
+        int32_t next_id = sample_next(logits.data_as<float>(), vocab,
+                                       sampling, rng, history, scratch);
         generated.push_back(next_id);
+        history.push_back(next_id);
         if (next_id == eos_id) break;
         logits = forward_one(w, cfg, rope, next_id, kv);
     }

@@ -440,8 +440,14 @@ static const char* kIndexHtml = R"HTML(<!doctype html>
     <div class="field">
       <label>temp</label>
       <input id="temperature" type="range" min="0" max="1.5" step="0.1" value="0.8"
-             style="width:80px;accent-color:var(--accent);">
-      <span id="tempVal" class="mono" style="font-size:.78rem;color:var(--fg);min-width:1.8rem;">0.8</span>
+             style="width:72px;accent-color:var(--accent);">
+      <span id="tempVal" class="mono" style="font-size:.78rem;color:var(--fg);min-width:1.6rem;">0.8</span>
+    </div>
+    <div class="field">
+      <label>rep</label>
+      <input id="repPenalty" type="range" min="1.0" max="1.5" step="0.05" value="1.15"
+             style="width:72px;accent-color:var(--accent);">
+      <span id="repVal" class="mono" style="font-size:.78rem;color:var(--fg);min-width:2rem;">1.15</span>
     </div>
     <span class="hint"><kbd>⌘⏎</kbd> run · <kbd>esc</kbd> stop</span>
     <button class="btn" id="compareBtn">Compare all</button>
@@ -482,8 +488,13 @@ const spark   = $('spark');
 const tempEl  = $('temperature');
 const tempValEl = $('tempVal');
 
+const repEl    = $('repPenalty');
+const repValEl = $('repVal');
 tempEl.addEventListener('input', () => {
   tempValEl.textContent = parseFloat(tempEl.value).toFixed(1);
+});
+repEl.addEventListener('input', () => {
+  repValEl.textContent = parseFloat(repEl.value).toFixed(2);
 });
 
 let activeStream = null;
@@ -547,7 +558,9 @@ function streamGenerate() {
   const genSpan = outEl.querySelector('.gen');
 
   const temperature = parseFloat(tempEl.value);
-  const url = `/stream?prompt=${encodeURIComponent(prompt)}&max_tokens=${max_tokens}&quant=${quant}&temperature=${temperature}`;
+  const rep_penalty = parseFloat(repEl.value);
+  const url = `/stream?prompt=${encodeURIComponent(prompt)}&max_tokens=${max_tokens}` +
+              `&quant=${quant}&temperature=${temperature}&rep_penalty=${rep_penalty}`;
   const es  = new EventSource(url);
   activeStream = es;
 
@@ -612,7 +625,11 @@ async function compareAll() {
   try {
     const r = await fetch('/compare', {
       method: 'POST', headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({ prompt, max_tokens, temperature: parseFloat(tempEl.value) }),
+      body: JSON.stringify({
+        prompt, max_tokens,
+        temperature: parseFloat(tempEl.value),
+        rep_penalty: parseFloat(repEl.value),
+      }),
     });
     const data = await r.json();
     compareEl.innerHTML = '';
@@ -849,8 +866,10 @@ static GenResult run_generate(ServerState& st, const ModelWeights& w,
 // Parse sampling params from a JSON body or query string helpers.
 static SamplingParams parse_sampling(const json& req) {
     SamplingParams sp;
-    sp.temperature = std::max(0.0f, std::min(2.0f, req.value("temperature", 0.0f)));
-    sp.top_k       = std::max(1, std::min(200, req.value("top_k", 40)));
+    sp.temperature = std::max(0.0f, std::min(2.0f,  req.value("temperature", 0.0f)));
+    sp.top_k       = std::max(1,    std::min(200,   req.value("top_k", 40)));
+    sp.rep_penalty = std::max(1.0f, std::min(2.0f,  req.value("rep_penalty", 1.0f)));
+    sp.rep_window  = std::max(0,    std::min(2048,  req.value("rep_window", 128)));
     sp.seed        = req.value("seed", static_cast<uint64_t>(0));
     return sp;
 }
@@ -929,8 +948,10 @@ static void handle_stream(ServerState& st, int sock, const std::string& qs) {
     SamplingParams sp;
     std::string t_str = query_param(qs, "temperature");
     std::string k_str = query_param(qs, "top_k");
+    std::string r_str = query_param(qs, "rep_penalty");
     if (!t_str.empty()) sp.temperature = std::max(0.0f, std::min(2.0f, std::stof(t_str)));
-    if (!k_str.empty()) sp.top_k       = std::max(1, std::min(200, std::atoi(k_str.c_str())));
+    if (!k_str.empty()) sp.top_k       = std::max(1,    std::min(200,  std::atoi(k_str.c_str())));
+    if (!r_str.empty()) sp.rep_penalty = std::max(1.0f, std::min(2.0f, std::stof(r_str)));
 
     if (prompt.empty()) {
         send_all(sock, http_response(400, "text/plain", "empty prompt"));
@@ -970,7 +991,26 @@ static void handle_stream(ServerState& st, int sock, const std::string& qs) {
 
     std::mt19937 rng(std::random_device{}());
 
-    auto sample = [&](const float* lp) -> int32_t {
+    // Build history for repetition penalty (prompt + so-far generated).
+    std::vector<int32_t> history(prompt_ids.begin(), prompt_ids.end());
+    std::vector<float>   scratch; scratch.reserve(vocab);
+
+    auto apply_rep = [&](const float* lp) -> const float* {
+        scratch.assign(lp, lp + vocab);
+        if (sp.rep_penalty <= 1.0f || sp.rep_window <= 0) return scratch.data();
+        const size_t start = history.size() > static_cast<size_t>(sp.rep_window)
+                             ? history.size() - static_cast<size_t>(sp.rep_window) : 0;
+        for (size_t i = start; i < history.size(); ++i) {
+            int32_t t = history[i];
+            if (t < 0 || static_cast<size_t>(t) >= vocab) continue;
+            scratch[t] = (scratch[t] > 0.f) ? scratch[t] / sp.rep_penalty
+                                            : scratch[t] * sp.rep_penalty;
+        }
+        return scratch.data();
+    };
+
+    auto sample = [&](const float* lp_in) -> int32_t {
+        const float* lp = apply_rep(lp_in);
         if (sp.temperature <= 0.0f) {
             int32_t best = 0; float best_val = lp[0];
             for (size_t v = 1; v < vocab; ++v)
@@ -1023,6 +1063,7 @@ static void handle_stream(ServerState& st, int sock, const std::string& qs) {
         int32_t next_id = sample(lp);
 
         gen_ids.push_back(next_id);
+        history.push_back(next_id);
 
         // Decode cumulative, trim trailing incomplete UTF-8, emit only the
         // completed suffix. Byte-level BPE may split a codepoint across tokens.
