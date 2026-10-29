@@ -33,7 +33,7 @@ struct ModelWeights {
 // Load all weights from a safetensors file (BF16 → F32 conversion included).
 ModelWeights load_weights(const SafetensorsFile& sf, const ModelConfig& cfg);
 
-// Full causal forward pass.
+// Full causal forward pass (prefill — no cache).
 //   ids     : token IDs for the input sequence
 //   rope    : precomputed RoPE tables (build once, reuse)
 //   returns : [seq_len, vocab_size]  F32 logits (all positions)
@@ -41,5 +41,48 @@ Tensor forward(const ModelWeights& weights,
                const ModelConfig&  cfg,
                const RopeCache&    rope,
                std::span<const int32_t> ids);
+
+// ── KV-cache for incremental decode ──────────────────────────────────────────
+
+struct KVCache {
+    struct Layer {
+        std::vector<float> k;   // row-major [seq_len * kv_dim]
+        std::vector<float> v;
+        size_t kv_dim  = 0;
+        size_t seq_len = 0;
+
+        void append(const float* k_row, const float* v_row) {
+            k.insert(k.end(), k_row, k_row + kv_dim);
+            v.insert(v.end(), v_row, v_row + kv_dim);
+            ++seq_len;
+        }
+    };
+    std::vector<Layer> layers;
+};
+
+// Allocate an empty KV cache sized for cfg (zero tokens stored).
+KVCache make_kvcache(const ModelConfig& cfg);
+
+// Single-token incremental forward (decode step).
+//   token_id : the new token to process
+//   kv       : cache updated in-place (one new K/V row appended per layer)
+//   returns  : [1, vocab_size]  F32 logits for the new token
+Tensor forward_one(const ModelWeights& weights,
+                   const ModelConfig&  cfg,
+                   const RopeCache&    rope,
+                   int32_t             token_id,
+                   KVCache&            kv);
+
+// ── Greedy generation loop ────────────────────────────────────────────────────
+
+// Greedily generate up to max_new_tokens tokens given a prompt token sequence.
+// Stops early if eos_id is sampled.  Returns only the newly generated ids
+// (not the prompt).
+std::vector<int32_t> generate(const ModelWeights&           weights,
+                               const ModelConfig&             cfg,
+                               const RopeCache&               rope,
+                               std::span<const int32_t>       prompt_ids,
+                               int                            max_new_tokens,
+                               int32_t                        eos_id = 2);
 
 } // namespace minillm

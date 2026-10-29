@@ -196,54 +196,54 @@ void softmax_inplace(float* row, size_t n) {
 Tensor scaled_dot_product_attention(const Tensor& q,
                                      const Tensor& k,
                                      const Tensor& v,
-                                     bool causal) {
+                                     bool causal,
+                                     int  q_offset) {
     assert(q.ndim() == 2 && k.ndim() == 2 && v.ndim() == 2);
     assert(q.dtype() == DType::F32 && k.dtype() == DType::F32 && v.dtype() == DType::F32);
 
-    const size_t seq_len = q.shape()[0];
+    const size_t q_len   = q.shape()[0];
+    const size_t kv_len  = k.shape()[0];
     const size_t head_dim = q.shape()[1];
-    const float  scale    = 1.f / std::sqrt(static_cast<float>(head_dim));
+    const float  scale   = 1.f / std::sqrt(static_cast<float>(head_dim));
 
-    assert(k.shape() == q.shape());
-    assert(v.shape()[0] == seq_len && v.shape()[1] == head_dim);
+    assert(k.shape()[1] == head_dim);
+    assert(v.shape()[0] == kv_len && v.shape()[1] == head_dim);
 
     const float* qp = q.data_as<float>();
     const float* kp = k.data_as<float>();
     const float* vp = v.data_as<float>();
 
-    // Step 1: scores[i,j] = dot(q[i,:], k[j,:]) * scale
-    Tensor scores({seq_len, seq_len}, DType::F32);
+    // scores[i,j] = dot(q[i], k[j]) * scale
+    Tensor scores({q_len, kv_len}, DType::F32);
     float* sp = scores.data_as<float>();
 
-    for (size_t i = 0; i < seq_len; ++i) {
-        for (size_t j = 0; j < seq_len; ++j) {
+    for (size_t i = 0; i < q_len; ++i) {
+        for (size_t j = 0; j < kv_len; ++j) {
             float dot = 0.f;
             for (size_t d = 0; d < head_dim; ++d)
                 dot += qp[i * head_dim + d] * kp[j * head_dim + d];
-            sp[i * seq_len + j] = dot * scale;
+            sp[i * kv_len + j] = dot * scale;
         }
     }
 
-    // Step 1b: apply causal mask — future positions become -inf
+    // Causal mask: q[i] is at position q_offset+i; mask j > q_offset+i
     if (causal) {
-        for (size_t i = 0; i < seq_len; ++i)
-            for (size_t j = i + 1; j < seq_len; ++j)
-                sp[i * seq_len + j] = -std::numeric_limits<float>::infinity();
+        for (size_t i = 0; i < q_len; ++i)
+            for (size_t j = static_cast<size_t>(q_offset) + i + 1; j < kv_len; ++j)
+                sp[i * kv_len + j] = -std::numeric_limits<float>::infinity();
     }
 
-    // Step 2: softmax row-wise (handles -inf correctly: exp(-inf)=0)
-    for (size_t i = 0; i < seq_len; ++i)
-        softmax_inplace(sp + i * seq_len, seq_len);
+    for (size_t i = 0; i < q_len; ++i)
+        softmax_inplace(sp + i * kv_len, kv_len);
 
-    // Step 3: out[i,d] = sum_j scores[i,j] * v[j,d]
-    Tensor out({seq_len, head_dim}, DType::F32);
+    Tensor out({q_len, head_dim}, DType::F32);
     float* op = out.data_as<float>();
 
-    for (size_t i = 0; i < seq_len; ++i) {
+    for (size_t i = 0; i < q_len; ++i) {
         for (size_t d = 0; d < head_dim; ++d) {
             float acc = 0.f;
-            for (size_t j = 0; j < seq_len; ++j)
-                acc += sp[i * seq_len + j] * vp[j * head_dim + d];
+            for (size_t j = 0; j < kv_len; ++j)
+                acc += sp[i * kv_len + j] * vp[j * head_dim + d];
             op[i * head_dim + d] = acc;
         }
     }
@@ -319,7 +319,6 @@ Tensor gqa_attention(const Tensor& x,
     assert(n_heads % n_kv_heads == 0);
 
     const size_t seq_len   = x.shape()[0];
-    const size_t hidden    = x.shape()[1];
     const size_t head_dim  = Wq.shape()[0] / static_cast<size_t>(n_heads);
     const int    kv_groups = n_heads / n_kv_heads;
 

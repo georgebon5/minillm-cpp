@@ -60,14 +60,17 @@ void rope_apply(Tensor& x, const RopeCache& cache, int pos_offset = 0);
 // Exported so the sampler can reuse it for logit processing.
 void softmax_inplace(float* row, size_t n);
 
-// Scaled dot-product attention for a single head.
-//   q, k, v : [seq_len, head_dim]  F32
-//   causal  : if true, mask out j > i (upper triangle set to -inf before softmax)
-//   returns : [seq_len, head_dim]  F32  (owning)
+// Scaled dot-product attention (supports q_len ≠ kv_len for KV-cache decode).
+//   q        : [q_len,  head_dim]   F32  — queries
+//   k, v     : [kv_len, head_dim]   F32  — keys / values (kv_len >= q_len)
+//   causal   : mask j > q_offset + i (upper-right block of score matrix)
+//   q_offset : sequence position of q[0] (0 for full prefill, past_len for decode)
+//   returns  : [q_len, head_dim]    F32  (owning)
 Tensor scaled_dot_product_attention(const Tensor& q,
                                      const Tensor& k,
                                      const Tensor& v,
-                                     bool causal = false);
+                                     bool causal   = false,
+                                     int  q_offset = 0);
 
 // ── Elementwise ops ───────────────────────────────────────────────────────────
 
