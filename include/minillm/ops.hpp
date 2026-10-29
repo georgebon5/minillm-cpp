@@ -115,4 +115,23 @@ Tensor gqa_attention(const Tensor& x,
                      int n_kv_heads,
                      int pos_offset = 0);
 
+// ── Quantization (post-training, symmetric per-tensor) ────────────────────────
+
+// Quantized weight tensor: symmetric per-tensor, FP32 activations (W8A16 / W4A16).
+struct QuantTensor {
+    Tensor data;   // DType::I8 (int8_t) or DType::I4 (nibble-packed uint8_t)
+    float  scale;  // dequant: w_f32 ≈ q * scale
+};
+
+// Quantize a F32 weight matrix to I8 or I4 (symmetric per-tensor).
+//   w      : [out_features, in_features]  F32  — weight matrix
+//   qdtype : DType::I8 or DType::I4
+QuantTensor quantize(const Tensor& w, DType qdtype);
+
+// Linear projection with quantized weights (dequantize-on-the-fly, one row at a time).
+//   x   : [seq_len, in_features]  F32
+//   Wq  : quantized [out_features, in_features]
+//   returns: [seq_len, out_features]  F32
+Tensor linear_q(const Tensor& x, const QuantTensor& Wq);
+
 } // namespace minillm

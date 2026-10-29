@@ -397,4 +397,95 @@ Tensor gqa_attention(const Tensor& x,
     return linear(attn_out, Wo);
 }
 
+// ── Quantization ──────────────────────────────────────────────────────────────
+
+QuantTensor quantize(const Tensor& w, DType qdtype) {
+    assert(w.ndim() == 2 && w.dtype() == DType::F32);
+    assert(qdtype == DType::I8 || qdtype == DType::I4);
+
+    const size_t numel   = w.numel();
+    const float* wp      = w.data_as<float>();
+
+    // Find abs-max for scale computation
+    float abs_max = 0.f;
+    for (size_t i = 0; i < numel; ++i)
+        if (std::abs(wp[i]) > abs_max) abs_max = std::abs(wp[i]);
+
+    const float qmax  = (qdtype == DType::I8) ? 127.f : 7.f;
+    const float scale = (abs_max > 0.f) ? abs_max / qmax : 1.f;
+
+    Tensor data(w.shape(), qdtype);
+
+    if (qdtype == DType::I8) {
+        int8_t* qp = reinterpret_cast<int8_t*>(data.data_as<uint8_t>());
+        for (size_t i = 0; i < numel; ++i) {
+            float v = std::round(wp[i] / scale);
+            v = std::max(-127.f, std::min(127.f, v));
+            qp[i] = static_cast<int8_t>(v);
+        }
+    } else {  // I4 — nibble-packed, 2 values per byte, high nibble first
+        uint8_t* qp = data.data_as<uint8_t>();
+        for (size_t i = 0; i < numel; i += 2) {
+            auto clamp4 = [](float v) -> int8_t {
+                int iv = static_cast<int>(std::round(v));
+                return static_cast<int8_t>(std::max(-7, std::min(7, iv)));
+            };
+            int8_t hi = clamp4(wp[i]     / scale);
+            int8_t lo = (i + 1 < numel) ? clamp4(wp[i + 1] / scale) : 0;
+            // Store: high nibble = hi, low nibble = lo
+            qp[i / 2] = static_cast<uint8_t>(
+                (static_cast<uint8_t>(hi) & 0x0Fu) << 4u |
+                (static_cast<uint8_t>(lo) & 0x0Fu));
+        }
+    }
+
+    return {std::move(data), scale};
+}
+
+Tensor linear_q(const Tensor& x, const QuantTensor& Wq) {
+    assert(x.ndim() == 2 && x.dtype() == DType::F32);
+    assert(Wq.data.ndim() == 2);
+
+    const size_t seq_len  = x.shape()[0];
+    const size_t in_feat  = x.shape()[1];
+    const size_t out_feat = Wq.data.shape()[0];
+
+    Tensor out({seq_len, out_feat}, DType::F32);
+    const float* xp = x.data_as<float>();
+    float*       yp = out.data_as<float>();
+
+    // Dequantize one output row at a time to avoid allocating a full F32 copy.
+    std::vector<float> row(in_feat);
+
+    if (Wq.data.dtype() == DType::I8) {
+        const auto* qp = reinterpret_cast<const int8_t*>(Wq.data.data_as<uint8_t>());
+        for (size_t j = 0; j < out_feat; ++j) {
+            const int8_t* qrow = qp + j * in_feat;
+            for (size_t k = 0; k < in_feat; ++k)
+                row[k] = static_cast<float>(qrow[k]) * Wq.scale;
+            for (size_t i = 0; i < seq_len; ++i)
+                yp[i * out_feat + j] = dot_f32(xp + i * in_feat, row.data(), in_feat);
+        }
+    } else {  // I4
+        // Bytes per row: ceil(in_feat / 2)
+        const size_t bytes_per_row = (in_feat + 1) / 2;
+        const uint8_t* qp = Wq.data.data_as<uint8_t>();
+        for (size_t j = 0; j < out_feat; ++j) {
+            const uint8_t* qrow = qp + j * bytes_per_row;
+            for (size_t k = 0; k < in_feat; k += 2) {
+                uint8_t byte = qrow[k / 2];
+                // High nibble (sign-extend from 4 bits)
+                row[k] = static_cast<float>(static_cast<int8_t>(byte & 0xF0u) >> 4) * Wq.scale;
+                if (k + 1 < in_feat)
+                    row[k + 1] = static_cast<float>(
+                        static_cast<int8_t>(static_cast<uint8_t>(byte << 4u)) >> 4) * Wq.scale;
+            }
+            for (size_t i = 0; i < seq_len; ++i)
+                yp[i * out_feat + j] = dot_f32(xp + i * in_feat, row.data(), in_feat);
+        }
+    }
+
+    return out;
+}
+
 } // namespace minillm
