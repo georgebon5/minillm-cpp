@@ -69,6 +69,35 @@ Tensor forward(const ModelWeights& w,
     return linear(x, w.lm_head);   // [seq, vocab]
 }
 
+// ── Quantized-weight simulation ──────────────────────────────────────────────
+
+ModelWeights quantize_weights(const ModelWeights& src, DType qdtype) {
+    auto sim = [qdtype](const Tensor& t) {
+        return dequantize(quantize(t, qdtype));
+    };
+
+    ModelWeights w;
+    w.embed      = src.embed;       // kept F32 (embedding is a lookup, not linear)
+    w.final_norm = src.final_norm;  // kept F32 (elementwise scale, tiny)
+
+    w.layers.resize(src.layers.size());
+    for (size_t l = 0; l < src.layers.size(); ++l) {
+        const LayerWeights& s = src.layers[l];
+        LayerWeights&       d = w.layers[l];
+        d.attn_norm = s.attn_norm;  // RMSNorm scale, not a projection
+        d.mlp_norm  = s.mlp_norm;
+        d.Wq     = sim(s.Wq);
+        d.Wk     = sim(s.Wk);
+        d.Wv     = sim(s.Wv);
+        d.Wo     = sim(s.Wo);
+        d.W_gate = sim(s.W_gate);
+        d.W_up   = sim(s.W_up);
+        d.W_down = sim(s.W_down);
+    }
+    w.lm_head = sim(src.lm_head);
+    return w;
+}
+
 // ── KV-cache helpers ─────────────────────────────────────────────────────────
 
 KVCache make_kvcache(const ModelConfig& cfg) {

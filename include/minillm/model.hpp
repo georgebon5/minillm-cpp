@@ -60,6 +60,11 @@ struct KVCache {
     std::vector<Layer> layers;
 };
 
+// Return a copy of weights with all linear projection matrices replaced by
+// their quantize→dequantize round-trip (simulates W8A16 / W4A16 error).
+// embed and final_norm are left in F32.
+ModelWeights quantize_weights(const ModelWeights& w, DType qdtype);
+
 // Allocate an empty KV cache sized for cfg (zero tokens stored).
 KVCache make_kvcache(const ModelConfig& cfg);
 

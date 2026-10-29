@@ -488,4 +488,33 @@ Tensor linear_q(const Tensor& x, const QuantTensor& Wq) {
     return out;
 }
 
+Tensor dequantize(const QuantTensor& Wq) {
+    const size_t out_feat = Wq.data.shape()[0];
+    const size_t in_feat  = Wq.data.shape()[1];
+    Tensor out({out_feat, in_feat}, DType::F32);
+    float* yp = out.data_as<float>();
+
+    if (Wq.data.dtype() == DType::I8) {
+        const auto* qp = reinterpret_cast<const int8_t*>(Wq.data.data_as<uint8_t>());
+        for (size_t i = 0; i < out_feat * in_feat; ++i)
+            yp[i] = static_cast<float>(qp[i]) * Wq.scale;
+    } else {
+        const size_t bytes_per_row = (in_feat + 1) / 2;
+        const uint8_t* qp = Wq.data.data_as<uint8_t>();
+        for (size_t j = 0; j < out_feat; ++j) {
+            const uint8_t* qrow = qp + j * bytes_per_row;
+            for (size_t k = 0; k < in_feat; k += 2) {
+                uint8_t byte = qrow[k / 2];
+                yp[j * in_feat + k] =
+                    static_cast<float>(static_cast<int8_t>(byte & 0xF0u) >> 4) * Wq.scale;
+                if (k + 1 < in_feat)
+                    yp[j * in_feat + k + 1] =
+                        static_cast<float>(static_cast<int8_t>(static_cast<uint8_t>(byte << 4u)) >> 4)
+                        * Wq.scale;
+            }
+        }
+    }
+    return out;
+}
+
 } // namespace minillm

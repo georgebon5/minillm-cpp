@@ -134,4 +134,7 @@ QuantTensor quantize(const Tensor& w, DType qdtype);
 //   returns: [seq_len, out_features]  F32
 Tensor linear_q(const Tensor& x, const QuantTensor& Wq);
 
+// Reconstruct a F32 weight matrix from a QuantTensor (for simulation / evaluation).
+Tensor dequantize(const QuantTensor& Wq);
+
 } // namespace minillm
