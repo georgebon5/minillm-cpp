@@ -14,14 +14,13 @@ import json
 from pathlib import Path
 
 import numpy as np
-from safetensors import safe_open
+import torch
+from safetensors.torch import safe_open as safe_open_torch
 
 
-def bf16_bytes_to_f32(raw: bytes) -> np.ndarray:
-    """Reinterpret raw BF16 bytes as F32 by zero-extending each 2-byte value."""
-    u16 = np.frombuffer(raw, dtype="<u2")
-    u32 = u16.astype(np.uint32) << 16
-    return u32.view(np.float32)
+def to_f32_numpy(t: torch.Tensor) -> np.ndarray:
+    """Convert a torch tensor of any dtype to a float32 numpy array."""
+    return t.to(torch.float32).contiguous().numpy()
 
 
 def main() -> None:
@@ -44,20 +43,13 @@ def main() -> None:
     print(f"Reading {st_path} …")
     reference: dict = {}
 
-    with safe_open(str(st_path), framework="numpy") as f:
+    with safe_open_torch(str(st_path), framework="pt") as f:
         for name in sorted(f.keys()):
-            arr = f.get_tensor(name)           # numpy array, original dtype
-
-            # Convert to F32 regardless of stored dtype.
-            if str(arr.dtype) == "bfloat16":
-                # numpy has no native bfloat16; reinterpret bytes manually.
-                arr_f32 = bf16_bytes_to_f32(arr.tobytes()).reshape(arr.shape)
-            else:
-                arr_f32 = arr.astype(np.float32)
-
+            t       = f.get_tensor(name)
+            arr_f32 = to_f32_numpy(t)
             reference[name] = {
-                "shape":   list(arr.shape),
-                "dtype":   str(arr.dtype),
+                "shape":   list(t.shape),
+                "dtype":   str(t.dtype).replace("torch.", ""),
                 "first_4": arr_f32.flat[:4].tolist(),
             }
 
