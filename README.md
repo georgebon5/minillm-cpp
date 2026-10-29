@@ -23,15 +23,18 @@ Loads a HuggingFace transformer checkpoint and generates text:
 
 - **Loader** — mmap-backed `safetensors` with lazy BF16 → F32 conversion
 - **Model** — RMSNorm, grouped-query attention (GQA), RoPE, SwiGLU MLP,
-  tied embeddings
+  tied embeddings — tested with SmolLM2-135M and SmolLM2-360M
 - **Tokenizer** — byte-level BPE (GPT-2 style), encode + decode from
   `tokenizer.json`
-- **Inference** — KV-cache + greedy decode, prefill then incremental
-  `forward_one`
+- **Inference** — KV-cache + incremental `forward_one`, greedy argmax or
+  temperature + top-K sampling (seedable)
 - **Performance** — hand-written NEON intrinsics (4-accumulator FMA dot
   product) with scalar fallback
-- **Quantization** — symmetric per-channel INT8 / INT4 post-training
+- **Quantization** — symmetric **per-channel** INT8 / INT4 post-training
   quantization, nibble-packed storage
+- **Web UI** (`minillm-serve`) — single-binary HTTP server with SSE token
+  streaming, live top-5 token probability panel (model's "thought process"),
+  side-by-side fp32/int8/int4 comparison, no external HTTP libraries
 - **Testing** — 97 Catch2 tests, Ubuntu + macOS-14 CI matrix with
   ASan/UBSan, numerical correctness verified against PyTorch F32 reference
 
@@ -81,8 +84,13 @@ Debug builds enable AddressSanitizer and UBSan automatically.
 
 ```bash
 pip install -r tools/requirements.txt
-python tools/download_model.py            # ~270 MB
+python tools/download_model.py                                    # 135M, ~270 MB
+MODEL_ID=HuggingFaceTB/SmolLM2-360M python tools/download_model.py \
+    --out models/SmolLM2-360M                                     # 360M, ~720 MB
 ```
+
+The 360M model produces noticeably more coherent output; the 135M is
+faster and useful for correctness testing.
 
 ### Run
 
@@ -97,7 +105,15 @@ python tools/download_model.py            # ~270 MB
     --model models/SmolLM2-135M \
     --text  "In machine learning, large language models..." \
     --compare
+
+# Web UI (open http://localhost:8080)
+./build/minillm-serve --model models/SmolLM2-360M
 ```
+
+The web UI shows the model's live decode state: streaming tokens, memory
+footprint per quant level, and a top-5 probability panel that updates
+after each decode step so you can see exactly which tokens the model
+considered and why temperature sampling picks what it does.
 
 ### Test
 
