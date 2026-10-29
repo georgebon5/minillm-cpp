@@ -12,6 +12,7 @@
 #include <arpa/inet.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
+#include <sys/sysctl.h>
 #include <unistd.h>
 
 #include <algorithm>
@@ -1405,6 +1406,29 @@ static std::unique_ptr<Model> load_model(const fs::path& dir) {
     auto m = std::make_unique<Model>();
     m->name    = dir.filename().string();
     if (m->name.empty()) m->name = dir.string();  // trailing slash edge case
+
+    // Estimate F32 RAM footprint from on-disk BF16 size before committing to load.
+    {
+        size_t total_ram = 0;
+        size_t rlen = sizeof(total_ram);
+        sysctlbyname("hw.memsize", &total_ram, &rlen, nullptr, 0);
+        size_t file_bytes    = fs::file_size(dir / "model.safetensors");
+        size_t estimated_f32 = file_bytes * 2;  // BF16 on disk → F32 in RAM
+        if (total_ram > 0) {
+            const size_t mb = 1024 * 1024, gb = 1024 * mb;
+            std::cerr << "  RAM check: ~" << (estimated_f32 / mb) << " MB needed"
+                      << "  (system total: " << (total_ram / gb) << " GB)\n";
+            if (estimated_f32 > total_ram * 3 / 4) {
+                std::cerr << "  ERROR: " << m->name << " would need ~"
+                          << (estimated_f32 / mb) << " MB — more than 75% of "
+                          << (total_ram / gb) << " GB physical RAM.\n"
+                          << "  Loading will cause severe page-swapping and render the server unresponsive.\n"
+                          << "  Aborting. Use a smaller model or add more RAM.\n";
+                return nullptr;
+            }
+        }
+    }
+
     std::cerr << "Loading model " << m->name << " ...\n";
     m->cfg     = load_config((dir/"config.json").string());
     SafetensorsFile sf((dir/"model.safetensors").string());
