@@ -283,6 +283,19 @@ static const char* kIndexHtml = R"HTML(<!doctype html>
     border-radius: 1px; opacity: 0.75;
   }
 
+  /* ── prompt presets ──────────────────────────────────────────────────── */
+  .presets {
+    display: flex; gap: .4rem; flex-wrap: wrap;
+    margin: .5rem 0 0;
+  }
+  .preset {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 999px;
+    color: var(--fg-dim); font-size: .72rem; padding: .25rem .7rem;
+    cursor: pointer; transition: all .15s;
+    font-family: var(--sans);
+  }
+  .preset:hover { background: var(--surface-2); color: var(--fg); border-color: var(--border-strong); }
+
   /* ── top-K probability panel ─────────────────────────────────────────── */
   .topk {
     margin-top: .75rem;
@@ -425,6 +438,7 @@ static const char* kIndexHtml = R"HTML(<!doctype html>
   <!-- prompt section -->
   <div class="section-label">Prompt <div class="line"></div></div>
   <textarea id="prompt" placeholder="enter prompt and press ⌘⏎">The capital of France is</textarea>
+  <div class="presets" id="presets"></div>
 
   <div class="controls">
     <div class="field"><label>tokens</label>
@@ -442,6 +456,12 @@ static const char* kIndexHtml = R"HTML(<!doctype html>
       <input id="temperature" type="range" min="0" max="1.5" step="0.1" value="0.8"
              style="width:72px;accent-color:var(--accent);">
       <span id="tempVal" class="mono" style="font-size:.78rem;color:var(--fg);min-width:1.6rem;">0.8</span>
+    </div>
+    <div class="field">
+      <label>top-p</label>
+      <input id="topP" type="range" min="0.1" max="1.0" step="0.05" value="0.9"
+             style="width:72px;accent-color:var(--accent);">
+      <span id="topPVal" class="mono" style="font-size:.78rem;color:var(--fg);min-width:2rem;">0.9</span>
     </div>
     <div class="field">
       <label>rep</label>
@@ -488,14 +508,43 @@ const spark   = $('spark');
 const tempEl  = $('temperature');
 const tempValEl = $('tempVal');
 
+const topPEl   = $('topP');
+const topPValEl = $('topPVal');
 const repEl    = $('repPenalty');
 const repValEl = $('repVal');
 tempEl.addEventListener('input', () => {
   tempValEl.textContent = parseFloat(tempEl.value).toFixed(1);
 });
+topPEl.addEventListener('input', () => {
+  topPValEl.textContent = parseFloat(topPEl.value).toFixed(2);
+});
 repEl.addEventListener('input', () => {
   repValEl.textContent = parseFloat(repEl.value).toFixed(2);
 });
+
+// ── preset prompts (click to fill textarea) ──────────────────────────────
+const PRESETS = [
+  "The capital of France is",
+  "Once upon a time there was a",
+  "The three laws of thermodynamics are:",
+  "To make a cup of coffee you need",
+  "The best programming language for beginners is",
+  "Here's a short poem about the ocean:",
+  "def fibonacci(n):",
+  "The main difference between Python and C++ is",
+];
+const presetsEl = $('presets');
+for (const p of PRESETS) {
+  const btn = document.createElement('button');
+  btn.className = 'preset';
+  btn.textContent = p.length > 48 ? p.slice(0, 45) + '…' : p;
+  btn.title = p;
+  btn.addEventListener('click', () => {
+    promptEl.value = p;
+    promptEl.focus();
+  });
+  presetsEl.appendChild(btn);
+}
 
 let activeStream = null;
 let tpsHistory = [];
@@ -558,9 +607,10 @@ function streamGenerate() {
   const genSpan = outEl.querySelector('.gen');
 
   const temperature = parseFloat(tempEl.value);
+  const top_p       = parseFloat(topPEl.value);
   const rep_penalty = parseFloat(repEl.value);
   const url = `/stream?prompt=${encodeURIComponent(prompt)}&max_tokens=${max_tokens}` +
-              `&quant=${quant}&temperature=${temperature}&rep_penalty=${rep_penalty}`;
+              `&quant=${quant}&temperature=${temperature}&top_p=${top_p}&rep_penalty=${rep_penalty}`;
   const es  = new EventSource(url);
   activeStream = es;
 
@@ -628,6 +678,7 @@ async function compareAll() {
       body: JSON.stringify({
         prompt, max_tokens,
         temperature: parseFloat(tempEl.value),
+        top_p:       parseFloat(topPEl.value),
         rep_penalty: parseFloat(repEl.value),
       }),
     });
@@ -868,6 +919,7 @@ static SamplingParams parse_sampling(const json& req) {
     SamplingParams sp;
     sp.temperature = std::max(0.0f, std::min(2.0f,  req.value("temperature", 0.0f)));
     sp.top_k       = std::max(1,    std::min(200,   req.value("top_k", 40)));
+    sp.top_p       = std::max(0.05f, std::min(1.0f, req.value("top_p", 1.0f)));
     sp.rep_penalty = std::max(1.0f, std::min(2.0f,  req.value("rep_penalty", 1.0f)));
     sp.rep_window  = std::max(0,    std::min(2048,  req.value("rep_window", 128)));
     sp.seed        = req.value("seed", static_cast<uint64_t>(0));
@@ -949,9 +1001,11 @@ static void handle_stream(ServerState& st, int sock, const std::string& qs) {
     std::string t_str = query_param(qs, "temperature");
     std::string k_str = query_param(qs, "top_k");
     std::string r_str = query_param(qs, "rep_penalty");
-    if (!t_str.empty()) sp.temperature = std::max(0.0f, std::min(2.0f, std::stof(t_str)));
-    if (!k_str.empty()) sp.top_k       = std::max(1,    std::min(200,  std::atoi(k_str.c_str())));
-    if (!r_str.empty()) sp.rep_penalty = std::max(1.0f, std::min(2.0f, std::stof(r_str)));
+    std::string p_str = query_param(qs, "top_p");
+    if (!t_str.empty()) sp.temperature = std::max(0.0f,  std::min(2.0f, std::stof(t_str)));
+    if (!k_str.empty()) sp.top_k       = std::max(1,     std::min(200,  std::atoi(k_str.c_str())));
+    if (!p_str.empty()) sp.top_p       = std::max(0.05f, std::min(1.0f, std::stof(p_str)));
+    if (!r_str.empty()) sp.rep_penalty = std::max(1.0f,  std::min(2.0f, std::stof(r_str)));
 
     if (prompt.empty()) {
         send_all(sock, http_response(400, "text/plain", "empty prompt"));
@@ -1028,10 +1082,23 @@ static void handle_stream(ServerState& st, int sock, const std::string& qs) {
         std::vector<float> probs(k);
         for (size_t i = 0; i < k; ++i) { probs[i] = std::exp(scored[i].first - max_v); sum += probs[i]; }
         for (auto& p : probs) p /= sum;
+
+        size_t nucleus = k;
+        if (sp.top_p < 1.0f) {
+            float cum = 0.f;
+            for (size_t i = 0; i < k; ++i) {
+                cum += probs[i];
+                if (cum >= sp.top_p) { nucleus = i + 1; break; }
+            }
+            float s = 0.f;
+            for (size_t i = 0; i < nucleus; ++i) s += probs[i];
+            for (size_t i = 0; i < nucleus; ++i) probs[i] /= s;
+        }
+
         std::uniform_real_distribution<float> u(0.f, 1.f);
         float r = u(rng), acc = 0.f;
-        for (size_t i = 0; i < k; ++i) { acc += probs[i]; if (r < acc) return scored[i].second; }
-        return scored[k - 1].second;
+        for (size_t i = 0; i < nucleus; ++i) { acc += probs[i]; if (r < acc) return scored[i].second; }
+        return scored[nucleus - 1].second;
     };
 
     // Compute top-K softmax probabilities + decoded strings from logits.

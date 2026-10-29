@@ -278,13 +278,27 @@ static int32_t sample_next(const float* logits, size_t vocab,
     }
     for (auto& p : probs) p /= sum;
 
+    // Nucleus (top-p) truncation: keep smallest set whose cumulative prob >= top_p.
+    size_t nucleus = k;
+    if (sp.top_p < 1.0f) {
+        float cum = 0.f;
+        for (size_t i = 0; i < k; ++i) {
+            cum += probs[i];
+            if (cum >= sp.top_p) { nucleus = i + 1; break; }
+        }
+        // Renormalize the kept slice.
+        float s = 0.f;
+        for (size_t i = 0; i < nucleus; ++i) s += probs[i];
+        for (size_t i = 0; i < nucleus; ++i) probs[i] /= s;
+    }
+
     std::uniform_real_distribution<float> u(0.0f, 1.0f);
     float r = u(rng), acc = 0.f;
-    for (size_t i = 0; i < k; ++i) {
+    for (size_t i = 0; i < nucleus; ++i) {
         acc += probs[i];
         if (r < acc) return scored[i].second;
     }
-    return scored[k - 1].second;
+    return scored[nucleus - 1].second;
 }
 
 std::vector<int32_t> generate(const ModelWeights&       w,

@@ -83,6 +83,7 @@ Tensor forward_one(const ModelWeights& weights,
 struct SamplingParams {
     float    temperature  = 0.0f;  // 0 → greedy argmax; >0 → sampled
     int      top_k        = 40;    // keep only top-K tokens before softmax sampling
+    float    top_p        = 1.0f;  // nucleus: keep smallest set whose cumulative prob >= top_p
     float    rep_penalty  = 1.0f;  // 1.0 = disabled; typical 1.1–1.3 to suppress loops
     int      rep_window   = 128;   // how many recent tokens to apply penalty on
     uint64_t seed         = 0;     // 0 → use random_device
