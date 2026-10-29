@@ -21,8 +21,10 @@
 #include <cstring>
 #include <filesystem>
 #include <iostream>
+#include <memory>
 #include <random>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 using namespace minillm;
@@ -464,6 +466,9 @@ static const char* kIndexHtml = R"HTML(<!doctype html>
     <div class="field"><label>tokens</label>
       <input id="maxTokens" type="number" value="48" min="1" max="256">
     </div>
+    <div class="field"><label>model</label>
+      <select id="modelSel"></select>
+    </div>
     <div class="field"><label>quant</label>
       <select id="quant">
         <option value="fp32" selected>fp32</option>
@@ -567,23 +572,43 @@ let activeStream = null;
 let tpsHistory = [];
 
 // ── model info ──────────────────────────────────────────────────────────────
+let MODELS = []; // all loaded models from /info
+
+function renderModelStats(m) {
+  $('iVocab').textContent   = m.vocab.toLocaleString();
+  $('iLayers').textContent  = m.layers;
+  $('iHidden').textContent  = m.hidden;
+  $('iHeads').textContent   = m.n_heads;
+  $('iKvHeads').textContent = m.n_kv_heads + ' (GQA)';
+  $('iHeadDim').textContent = m.head_dim;
+  $('sizeFp32').textContent = fmtMB(m.mem_fp32_bytes);
+  $('sizeInt8').textContent = fmtMB(m.mem_int8_bytes);
+  $('sizeInt4').textContent = fmtMB(m.mem_int4_bytes);
+  $('barInt8').style.width = (100 * m.mem_int8_bytes / m.mem_fp32_bytes) + '%';
+  $('barInt4').style.width = (100 * m.mem_int4_bytes / m.mem_fp32_bytes) + '%';
+  $('multInt8').textContent = (m.mem_fp32_bytes/m.mem_int8_bytes).toFixed(1) + '×';
+  $('multInt4').textContent = (m.mem_fp32_bytes/m.mem_int4_bytes).toFixed(1) + '×';
+}
+
 async function loadInfo() {
   try {
     const r = await fetch('/info');
     const d = await r.json();
-    $('iVocab').textContent   = d.vocab.toLocaleString();
-    $('iLayers').textContent  = d.layers;
-    $('iHidden').textContent  = d.hidden;
-    $('iHeads').textContent   = d.n_heads;
-    $('iKvHeads').textContent = d.n_kv_heads + ' (GQA)';
-    $('iHeadDim').textContent = d.head_dim;
-    $('sizeFp32').textContent = fmtMB(d.mem_fp32_bytes);
-    $('sizeInt8').textContent = fmtMB(d.mem_int8_bytes);
-    $('sizeInt4').textContent = fmtMB(d.mem_int4_bytes);
-    $('barInt8').style.width = (100 * d.mem_int8_bytes / d.mem_fp32_bytes) + '%';
-    $('barInt4').style.width = (100 * d.mem_int4_bytes / d.mem_fp32_bytes) + '%';
-    $('multInt8').textContent = (d.mem_fp32_bytes/d.mem_int8_bytes).toFixed(1) + '×';
-    $('multInt4').textContent = (d.mem_fp32_bytes/d.mem_int4_bytes).toFixed(1) + '×';
+    MODELS = d.models || [d];
+    const sel = $('modelSel');
+    sel.innerHTML = '';
+    for (const m of MODELS) {
+      const opt = document.createElement('option');
+      opt.value = m.name;
+      opt.textContent = m.name;
+      sel.appendChild(opt);
+    }
+    sel.value = d.default || MODELS[0].name;
+    sel.addEventListener('change', () => {
+      const picked = MODELS.find(x => x.name === sel.value);
+      if (picked) renderModelStats(picked);
+    });
+    renderModelStats(MODELS.find(x => x.name === sel.value) || MODELS[0]);
   } catch (e) { console.warn('info failed', e); }
 }
 function fmtMB(b) { return (b/1024/1024).toFixed(1) + ' MB'; }
@@ -628,8 +653,10 @@ function streamGenerate() {
   const temperature = parseFloat(tempEl.value);
   const top_p       = parseFloat(topPEl.value);
   const rep_penalty = parseFloat(repEl.value);
+  const model       = $('modelSel').value;
   const url = `/stream?prompt=${encodeURIComponent(prompt)}&max_tokens=${max_tokens}` +
-              `&quant=${quant}&temperature=${temperature}&top_p=${top_p}&rep_penalty=${rep_penalty}`;
+              `&quant=${quant}&model=${encodeURIComponent(model)}` +
+              `&temperature=${temperature}&top_p=${top_p}&rep_penalty=${rep_penalty}`;
   const es  = new EventSource(url);
   activeStream = es;
 
@@ -706,6 +733,7 @@ async function compareAll() {
       method: 'POST', headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({
         prompt, max_tokens,
+        model:       $('modelSel').value,
         temperature: parseFloat(tempEl.value),
         top_p:       parseFloat(topPEl.value),
         rep_penalty: parseFloat(repEl.value),
@@ -835,8 +863,9 @@ loadInfo();
 </script>
 )HTML";
 
-// ── Globals set once at startup ──────────────────────────────────────────────
-struct ServerState {
+// ── A single loaded model (all its quant levels) ────────────────────────────
+struct Model {
+    std::string  name;          // basename of the model directory, used for lookup
     ModelConfig  cfg;
     ModelWeights w_fp32;
     ModelWeights w_int8;
@@ -847,28 +876,42 @@ struct ServerState {
     Tokenizer    tok;
 
     size_t mem_fp32_bytes = 0;
-    size_t mem_int8_bytes = 0;  // estimated
-    size_t mem_int4_bytes = 0;  // estimated
+    size_t mem_int8_bytes = 0;
+    size_t mem_int4_bytes = 0;
 };
 
-static const ModelWeights& ensure_weights(ServerState& st, const std::string& quant) {
-    if (quant == "int8") {
-        if (!st.int8_ready) {
-            std::cerr << "Quantizing to INT8 (one-time)...\n";
-            st.w_int8     = quantize_weights(st.w_fp32, DType::I8);
-            st.int8_ready = true;
+// ── Hub: all loaded models + lookup by name ─────────────────────────────────
+struct ServerState {
+    std::vector<std::unique_ptr<Model>> models;
+    std::unordered_map<std::string, Model*> by_name;
+
+    Model& pick(const std::string& name) {
+        if (!name.empty()) {
+            auto it = by_name.find(name);
+            if (it != by_name.end()) return *it->second;
         }
-        return st.w_int8;
+        return *models.front();
+    }
+};
+
+static const ModelWeights& ensure_weights(Model& m, const std::string& quant) {
+    if (quant == "int8") {
+        if (!m.int8_ready) {
+            std::cerr << "Quantizing " << m.name << " to INT8 (one-time)...\n";
+            m.w_int8     = quantize_weights(m.w_fp32, DType::I8);
+            m.int8_ready = true;
+        }
+        return m.w_int8;
     }
     if (quant == "int4") {
-        if (!st.int4_ready) {
-            std::cerr << "Quantizing to INT4 (one-time)...\n";
-            st.w_int4     = quantize_weights(st.w_fp32, DType::I4);
-            st.int4_ready = true;
+        if (!m.int4_ready) {
+            std::cerr << "Quantizing " << m.name << " to INT4 (one-time)...\n";
+            m.w_int4     = quantize_weights(m.w_fp32, DType::I4);
+            m.int4_ready = true;
         }
-        return st.w_int4;
+        return m.w_int4;
     }
-    return st.w_fp32;
+    return m.w_fp32;
 }
 
 // ── Byte accounting ──────────────────────────────────────────────────────────
@@ -993,15 +1036,15 @@ struct GenResult {
     int         tok_per_sec;
 };
 
-static GenResult run_generate(ServerState& st, const ModelWeights& w,
+static GenResult run_generate(Model& m, const ModelWeights& w,
                                const std::string& prompt, int max_tokens,
                                const SamplingParams& sampling) {
-    auto prompt_ids = encode(st.tok, prompt);
+    auto prompt_ids = encode(m.tok, prompt);
     auto t0 = clk::now();
-    auto ids = generate(w, st.cfg, st.rope, prompt_ids, max_tokens, st.tok.eos_id, sampling);
+    auto ids = generate(w, m.cfg, m.rope, prompt_ids, max_tokens, m.tok.eos_id, sampling);
     int ms = static_cast<int>(std::chrono::duration<double, std::milli>(clk::now() - t0).count());
     double tps = ids.empty() ? 0 : static_cast<double>(ids.size()) / (ms / 1000.0);
-    return { decode(st.tok, ids), static_cast<int>(ids.size()), ms, static_cast<int>(tps) };
+    return { decode(m.tok, ids), static_cast<int>(ids.size()), ms, static_cast<int>(tps) };
 }
 
 // Parse sampling params from a JSON body or query string helpers.
@@ -1019,17 +1062,39 @@ static SamplingParams parse_sampling(const json& req) {
 // ── Endpoint handlers ────────────────────────────────────────────────────────
 
 static std::string handle_info(const ServerState& st) {
+    json models = json::array();
+    for (const auto& up : st.models) {
+        const Model& m = *up;
+        models.push_back({
+            {"name",       m.name},
+            {"vocab",      m.cfg.vocab_size},
+            {"layers",     m.cfg.num_hidden_layers},
+            {"hidden",     m.cfg.hidden_size},
+            {"n_heads",    m.cfg.num_attention_heads},
+            {"n_kv_heads", m.cfg.num_key_value_heads},
+            {"head_dim",   m.cfg.head_dim},
+            {"max_pos",    m.cfg.max_position_embeddings},
+            {"mem_fp32_bytes", m.mem_fp32_bytes},
+            {"mem_int8_bytes", m.mem_int8_bytes},
+            {"mem_int4_bytes", m.mem_int4_bytes},
+        });
+    }
+    // Backwards-compat: expose the first model's fields at top level too so the
+    // old single-model UI code still works if we revert the frontend partially.
+    const Model& first = *st.models.front();
     json j = {
-        {"vocab",      st.cfg.vocab_size},
-        {"layers",     st.cfg.num_hidden_layers},
-        {"hidden",     st.cfg.hidden_size},
-        {"n_heads",    st.cfg.num_attention_heads},
-        {"n_kv_heads", st.cfg.num_key_value_heads},
-        {"head_dim",   st.cfg.head_dim},
-        {"max_pos",    st.cfg.max_position_embeddings},
-        {"mem_fp32_bytes", st.mem_fp32_bytes},
-        {"mem_int8_bytes", st.mem_int8_bytes},
-        {"mem_int4_bytes", st.mem_int4_bytes},
+        {"models",         models},
+        {"default",        first.name},
+        {"vocab",          first.cfg.vocab_size},
+        {"layers",         first.cfg.num_hidden_layers},
+        {"hidden",         first.cfg.hidden_size},
+        {"n_heads",        first.cfg.num_attention_heads},
+        {"n_kv_heads",     first.cfg.num_key_value_heads},
+        {"head_dim",       first.cfg.head_dim},
+        {"max_pos",        first.cfg.max_position_embeddings},
+        {"mem_fp32_bytes", first.mem_fp32_bytes},
+        {"mem_int8_bytes", first.mem_int8_bytes},
+        {"mem_int4_bytes", first.mem_int4_bytes},
     };
     return http_response(200, "application/json", safe_dump(j));
 }
@@ -1044,11 +1109,13 @@ static std::string handle_generate(ServerState& st, const std::string& body) {
     std::string prompt     = req.value("prompt", "");
     int         max_tokens = std::max(1, std::min(256, req.value("max_tokens", 48)));
     std::string quant      = req.value("quant", "fp32");
+    std::string model_name = req.value("model", "");
     if (prompt.empty())
         return http_response(400, "application/json", R"({"error":"empty prompt"})");
 
-    const ModelWeights& w = ensure_weights(st, quant);
-    auto r = run_generate(st, w, prompt, max_tokens, parse_sampling(req));
+    Model& m = st.pick(model_name);
+    const ModelWeights& w = ensure_weights(m, quant);
+    auto r = run_generate(m, w, prompt, max_tokens, parse_sampling(req));
     json j = {{"prompt",prompt},{"generated",r.generated},{"n_tokens",r.n_tokens},
               {"ms",r.ms},{"tok_per_sec",r.tok_per_sec}};
     return http_response(200, "application/json", safe_dump(j));
@@ -1067,13 +1134,15 @@ static std::string handle_compare(ServerState& st, const std::string& body) {
         return http_response(400, "application/json", R"({"error":"empty prompt"})");
 
     SamplingParams base_sp = parse_sampling(req);
-    // Use a fixed seed across all three so the same tokens are compared.
     if (base_sp.seed == 0) base_sp.seed = static_cast<uint64_t>(std::random_device{}());
+
+    std::string model_name = req.value("model", "");
+    Model& m = st.pick(model_name);
 
     json result;
     for (const char* q : {"fp32", "int8", "int4"}) {
-        const ModelWeights& w = ensure_weights(st, q);
-        auto r = run_generate(st, w, prompt, max_tokens, base_sp);
+        const ModelWeights& w = ensure_weights(m, q);
+        auto r = run_generate(m, w, prompt, max_tokens, base_sp);
         result[q] = {{"generated",r.generated},{"n_tokens",r.n_tokens},
                      {"ms",r.ms},{"tok_per_sec",r.tok_per_sec}};
     }
@@ -1085,7 +1154,9 @@ static void handle_stream(ServerState& st, int sock, const std::string& qs) {
     std::string prompt     = query_param(qs, "prompt");
     int         max_tokens = std::max(1, std::min(256, std::atoi(query_param(qs, "max_tokens").c_str())));
     std::string quant      = query_param(qs, "quant");
+    std::string model_name = query_param(qs, "model");
     if (quant.empty()) quant = "fp32";
+    Model& m = st.pick(model_name);
 
     SamplingParams sp;
     std::string t_str = query_param(qs, "temperature");
@@ -1115,23 +1186,23 @@ static void handle_stream(ServerState& st, int sock, const std::string& qs) {
         send_all(sock, msg);
     };
 
-    const ModelWeights& w = ensure_weights(st, quant);
+    const ModelWeights& w = ensure_weights(m, quant);
 
-    auto prompt_ids = encode(st.tok, prompt);
+    auto prompt_ids = encode(m.tok, prompt);
     if (prompt_ids.empty()) {
         emit("done", R"({"n_tokens":0,"ms":0,"tok_per_sec":0})");
         return;
     }
 
-    KVCache kv = make_kvcache(st.cfg);
+    KVCache kv = make_kvcache(m.cfg);
     Tensor logits;
     for (int32_t id : prompt_ids)
-        logits = forward_one(w, st.cfg, st.rope, id, kv);
+        logits = forward_one(w, m.cfg, m.rope, id, kv);
 
     std::vector<int32_t> gen_ids;
     std::string prev_text;
     auto t0 = clk::now();
-    const size_t vocab = static_cast<size_t>(st.cfg.vocab_size);
+    const size_t vocab = static_cast<size_t>(m.cfg.vocab_size);
 
     std::mt19937 rng(std::random_device{}());
 
@@ -1206,7 +1277,7 @@ static void handle_stream(ServerState& st, int sock, const std::string& qs) {
         json arr = json::array();
         for (int i = 0; i < K; ++i) {
             std::vector<int32_t> one = { scored[i].second };
-            std::string s = decode(st.tok, one);
+            std::string s = decode(m.tok, one);
             // Replace invalid UTF-8 fragments so JSON serializes cleanly.
             if (utf8_safe_len(s) < s.size()) s = s.substr(0, utf8_safe_len(s));
             arr.push_back({ {"token", s}, {"id", scored[i].second}, {"p", probs[i]} });
@@ -1224,7 +1295,7 @@ static void handle_stream(ServerState& st, int sock, const std::string& qs) {
 
         // Decode cumulative, trim trailing incomplete UTF-8, emit only the
         // completed suffix. Byte-level BPE may split a codepoint across tokens.
-        std::string full = decode(st.tok, gen_ids);
+        std::string full = decode(m.tok, gen_ids);
         size_t safe = utf8_safe_len(full);
         if (safe > prev_text.size()) {
             std::string delta = full.substr(prev_text.size(), safe - prev_text.size());
@@ -1234,12 +1305,12 @@ static void handle_stream(ServerState& st, int sock, const std::string& qs) {
             emit("token", safe_dump(ev));
         }
 
-        if (next_id == st.tok.eos_id) break;
-        logits = forward_one(w, st.cfg, st.rope, next_id, kv);
+        if (next_id == m.tok.eos_id) break;
+        logits = forward_one(w, m.cfg, m.rope, next_id, kv);
     }
 
     // Flush any remainder (should be rare — final tokens usually complete all UTF-8).
-    std::string final_full = decode(st.tok, gen_ids);
+    std::string final_full = decode(m.tok, gen_ids);
     if (final_full.size() > prev_text.size()) {
         std::string tail = final_full.substr(prev_text.size());
         json ev = {{"delta",tail},{"id",-1},{"n",gen_ids.size()}};
@@ -1289,43 +1360,59 @@ static void dispatch(ServerState& st, int sock, const std::string& raw) {
 
 // ── main ─────────────────────────────────────────────────────────────────────
 
+static std::unique_ptr<Model> load_model(const fs::path& dir) {
+    for (const auto& p : {dir/"config.json", dir/"model.safetensors", dir/"tokenizer.json"}) {
+        if (!fs::exists(p)) {
+            std::cerr << "  missing: " << p << "\n";
+            return nullptr;
+        }
+    }
+    auto m = std::make_unique<Model>();
+    m->name    = dir.filename().string();
+    if (m->name.empty()) m->name = dir.string();  // trailing slash edge case
+    std::cerr << "Loading model " << m->name << " ...\n";
+    m->cfg     = load_config((dir/"config.json").string());
+    SafetensorsFile sf((dir/"model.safetensors").string());
+    m->w_fp32  = load_weights(sf, m->cfg);
+    m->rope    = build_rope_cache(m->cfg.max_position_embeddings,
+                                   m->cfg.head_dim, m->cfg.rope_theta);
+    m->tok     = load_tokenizer((dir/"tokenizer.json").string());
+
+    m->mem_fp32_bytes = weight_bytes(m->w_fp32);
+    size_t proj_f32   = m->mem_fp32_bytes - m->w_fp32.embed.nbytes()
+                                           - m->w_fp32.final_norm.nbytes();
+    m->mem_int8_bytes = m->w_fp32.embed.nbytes() + m->w_fp32.final_norm.nbytes() + proj_f32 / 4;
+    m->mem_int4_bytes = m->w_fp32.embed.nbytes() + m->w_fp32.final_norm.nbytes() + proj_f32 / 8;
+    return m;
+}
+
 int main(int argc, char** argv) {
-    std::string model_dir = "";
-    int         port      = 8080;
+    std::vector<std::string> model_dirs;
+    int port = 8080;
     for (int i = 1; i < argc; ++i) {
         if      (std::strcmp(argv[i], "--help")  == 0) {
-            std::cerr << "Usage: " << argv[0] << " --model <dir> [--port 8080]\n";
+            std::cerr << "Usage: " << argv[0]
+                      << " --model <dir> [--model <dir>] ... [--port 8080]\n";
             return 0;
         }
-        else if (std::strcmp(argv[i], "--model") == 0 && i+1 < argc) model_dir = argv[++i];
+        else if (std::strcmp(argv[i], "--model") == 0 && i+1 < argc) model_dirs.push_back(argv[++i]);
         else if (std::strcmp(argv[i], "--port")  == 0 && i+1 < argc) port = std::atoi(argv[++i]);
     }
-    if (model_dir.empty()) {
-        std::cerr << "Usage: " << argv[0] << " --model <dir> [--port 8080]\n";
+    if (model_dirs.empty()) {
+        std::cerr << "Usage: " << argv[0]
+                  << " --model <dir> [--model <dir>] ... [--port 8080]\n";
         return 1;
     }
 
-    const fs::path dir(model_dir);
-    for (const auto& p : {dir/"config.json", dir/"model.safetensors", dir/"tokenizer.json"}) {
-        if (!fs::exists(p)) { std::cerr << "Missing: " << p << "\n"; return 1; }
-    }
-
-    std::cerr << "Loading model...\n";
     ServerState st;
-    st.cfg    = load_config((dir/"config.json").string());
-    SafetensorsFile sf((dir/"model.safetensors").string());
-    st.w_fp32 = load_weights(sf, st.cfg);
-    st.rope   = build_rope_cache(st.cfg.max_position_embeddings,
-                                  st.cfg.head_dim, st.cfg.rope_theta);
-    st.tok    = load_tokenizer((dir/"tokenizer.json").string());
-
-    // Memory estimates (projection matrices scale, embed/norms kept f32)
-    st.mem_fp32_bytes = weight_bytes(st.w_fp32);
-    // Rough estimate: proj matrices ~ 90% of weights; int8 = /4, int4 = /8
-    size_t proj_f32 = st.mem_fp32_bytes - st.w_fp32.embed.nbytes()
-                                        - st.w_fp32.final_norm.nbytes();
-    st.mem_int8_bytes = st.w_fp32.embed.nbytes() + st.w_fp32.final_norm.nbytes() + proj_f32 / 4;
-    st.mem_int4_bytes = st.w_fp32.embed.nbytes() + st.w_fp32.final_norm.nbytes() + proj_f32 / 8;
+    for (const auto& d : model_dirs) {
+        auto m = load_model(fs::path(d));
+        if (!m) return 1;
+        st.by_name[m->name] = m.get();
+        st.models.push_back(std::move(m));
+    }
+    std::cerr << "Loaded " << st.models.size() << " model(s). Default: "
+              << st.models.front()->name << "\n";
 
     int srv = socket(AF_INET, SOCK_STREAM, 0);
     if (srv < 0) { perror("socket"); return 1; }
