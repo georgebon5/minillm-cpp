@@ -849,6 +849,35 @@ static size_t weight_bytes(const ModelWeights& w) {
     return b;
 }
 
+// Length of the longest valid UTF-8 prefix of s. A trailing incomplete
+// multi-byte sequence is excluded so JSON serialization never fails and
+// SSE token deltas don't emit partial codepoints.
+static size_t utf8_safe_len(const std::string& s) {
+    const size_t n = s.size();
+    if (n == 0) return 0;
+    // Walk back from end; find the start byte of the last codepoint.
+    size_t i = n;
+    while (i > 0) {
+        --i;
+        uint8_t c = static_cast<uint8_t>(s[i]);
+        if ((c & 0x80) == 0) return i + 1;        // ASCII, complete
+        if ((c & 0xC0) == 0x80) continue;         // continuation byte, keep going
+        // start byte: how many total bytes does this codepoint need?
+        size_t need = 0;
+        if      ((c & 0xE0) == 0xC0) need = 2;
+        else if ((c & 0xF0) == 0xE0) need = 3;
+        else if ((c & 0xF8) == 0xF0) need = 4;
+        else return i;                            // malformed, drop byte
+        return (n - i >= need) ? n : i;           // complete at tail or truncate
+    }
+    return 0;
+}
+
+// Serialize JSON with invalid UTF-8 replaced by U+FFFD (never throw).
+static std::string safe_dump(const json& j) {
+    return j.dump(-1, ' ', false, json::error_handler_t::replace);
+}
+
 // ── HTTP helpers ─────────────────────────────────────────────────────────────
 
 static std::string http_response(int status, const std::string& ctype,
@@ -956,7 +985,7 @@ static std::string handle_info(const ServerState& st) {
         {"mem_int8_bytes", st.mem_int8_bytes},
         {"mem_int4_bytes", st.mem_int4_bytes},
     };
-    return http_response(200, "application/json", j.dump());
+    return http_response(200, "application/json", safe_dump(j));
 }
 
 static std::string handle_generate(ServerState& st, const std::string& body) {
@@ -976,7 +1005,7 @@ static std::string handle_generate(ServerState& st, const std::string& body) {
     auto r = run_generate(st, w, prompt, max_tokens);
     json j = {{"prompt",prompt},{"generated",r.generated},{"n_tokens",r.n_tokens},
               {"ms",r.ms},{"tok_per_sec",r.tok_per_sec}};
-    return http_response(200, "application/json", j.dump());
+    return http_response(200, "application/json", safe_dump(j));
 }
 
 static std::string handle_compare(ServerState& st, const std::string& body) {
@@ -998,7 +1027,7 @@ static std::string handle_compare(ServerState& st, const std::string& body) {
         result[q] = {{"generated",r.generated},{"n_tokens",r.n_tokens},
                      {"ms",r.ms},{"tok_per_sec",r.tok_per_sec}};
     }
-    return http_response(200, "application/json", result.dump());
+    return http_response(200, "application/json", safe_dump(result));
 }
 
 // SSE: inline the generate loop so we can push one token at a time.
@@ -1052,22 +1081,34 @@ static void handle_stream(ServerState& st, int sock, const std::string& qs) {
 
         gen_ids.push_back(next_id);
 
-        // Decode cumulative then take the new suffix.
+        // Decode cumulative, trim trailing incomplete UTF-8, emit only the
+        // completed suffix. Byte-level BPE may split a codepoint across tokens
+        // (e.g. Greek letters = 2 bytes); we buffer until it's complete.
         std::string full = decode(st.tok, gen_ids);
-        std::string delta = full.substr(prev_text.size());
-        prev_text = full;
-
-        json ev = {{"delta",delta},{"id",next_id},{"n",gen_ids.size()}};
-        emit("token", ev.dump());
+        size_t safe = utf8_safe_len(full);
+        if (safe > prev_text.size()) {
+            std::string delta = full.substr(prev_text.size(), safe - prev_text.size());
+            prev_text = full.substr(0, safe);
+            json ev = {{"delta",delta},{"id",next_id},{"n",gen_ids.size()}};
+            emit("token", safe_dump(ev));
+        }
 
         if (next_id == st.tok.eos_id) break;
         logits = forward_one(w, st.cfg, st.rope, next_id, kv);
     }
 
+    // Flush any remainder (should be rare — final tokens usually complete all UTF-8).
+    std::string final_full = decode(st.tok, gen_ids);
+    if (final_full.size() > prev_text.size()) {
+        std::string tail = final_full.substr(prev_text.size());
+        json ev = {{"delta",tail},{"id",-1},{"n",gen_ids.size()}};
+        emit("token", safe_dump(ev));
+    }
+
     int ms = static_cast<int>(std::chrono::duration<double, std::milli>(clk::now() - t0).count());
     double tps = gen_ids.empty() ? 0 : static_cast<double>(gen_ids.size()) / (ms / 1000.0);
     json done = {{"n_tokens",gen_ids.size()},{"ms",ms},{"tok_per_sec",static_cast<int>(tps)}};
-    emit("done", done.dump());
+    emit("done", safe_dump(done));
 }
 
 // ── Dispatcher ───────────────────────────────────────────────────────────────
