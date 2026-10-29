@@ -296,50 +296,70 @@ static const char* kIndexHtml = R"HTML(<!doctype html>
   }
   .preset:hover { background: var(--surface-2); color: var(--fg); border-color: var(--border-strong); }
 
-  /* ── top-K probability panel ─────────────────────────────────────────── */
-  .topk {
-    margin-top: .75rem;
-    background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
-    padding: .9rem 1rem;
-    display: none;
+  /* ── token spans in output (clickable to show top-5) ─────────────────── */
+  .output .tok {
+    cursor: pointer; border-radius: 3px; padding: 0 1px;
+    transition: background .15s;
+    position: relative;
   }
-  .topk.visible { display: block; animation: fadeIn .3s ease-out; }
-  .topk .topk-head {
+  .output .tok:hover { background: rgba(124, 111, 245, 0.15); }
+  .output .tok.active { background: var(--accent-dim); color: var(--accent); }
+
+  /* floating tooltip with top-5 for a specific token */
+  .tok-popover {
+    position: fixed; z-index: 100;
+    background: var(--surface); border: 1px solid var(--border-strong);
+    border-radius: 8px; padding: .75rem .9rem;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(124, 111, 245, 0.2);
+    min-width: 300px; max-width: 360px;
+    animation: fadeIn .15s ease-out;
+    pointer-events: none;
+  }
+  .tok-popover.pinned { pointer-events: auto; }
+  .tok-popover .pop-head {
     display: flex; justify-content: space-between; align-items: baseline;
-    margin-bottom: .6rem;
+    margin-bottom: .5rem;
+    padding-bottom: .4rem; border-bottom: 1px solid var(--border);
   }
-  .topk .topk-head .title {
-    font-size: .78rem; font-weight: 500; color: var(--fg);
+  .tok-popover .pop-title {
+    font-size: .72rem; font-weight: 500; letter-spacing: .05em;
+    text-transform: uppercase; color: var(--muted);
   }
-  .topk .topk-head .ctx { color: var(--muted); font-size: .72rem; font-family: var(--mono); }
+  .tok-popover .pop-step {
+    font-family: var(--mono); font-size: .72rem; color: var(--accent);
+  }
   .topk-row {
-    display: grid; grid-template-columns: 1.5rem minmax(0, 10rem) 1fr 3.5rem;
-    gap: .6rem; align-items: center;
-    padding: .3rem 0; font-family: var(--mono); font-size: .78rem;
+    display: grid; grid-template-columns: 1.5rem minmax(0, 7rem) 1fr 3rem;
+    gap: .5rem; align-items: center;
+    padding: .25rem 0; font-family: var(--mono); font-size: .76rem;
   }
-  .topk-row .rank { color: var(--muted); font-size: .7rem; }
-  .topk-row .tok {
+  .topk-row .rank { color: var(--muted); font-size: .68rem; }
+  .topk-row .tok-str {
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
     color: var(--fg); background: var(--surface-2); border-radius: 3px;
     padding: 1px 6px;
   }
-  .topk-row.chosen .tok {
+  .topk-row.chosen .tok-str {
     color: var(--accent); background: var(--accent-dim);
     box-shadow: inset 0 0 0 1px rgba(124, 111, 245, 0.35);
   }
   .topk-row .bar-track {
-    height: 6px; background: var(--surface-2); border-radius: 3px; overflow: hidden;
+    height: 5px; background: var(--surface-2); border-radius: 3px; overflow: hidden;
   }
   .topk-row .bar-fill {
     height: 100%; background: var(--muted); border-radius: 3px;
-    transition: width .35s cubic-bezier(.4, 0, .2, 1);
+    transition: width .25s cubic-bezier(.4, 0, .2, 1);
   }
   .topk-row.chosen .bar-fill { background: var(--accent); }
   .topk-row .pct {
     color: var(--fg-dim); font-variant-numeric: tabular-nums;
-    text-align: right; font-size: .75rem;
+    text-align: right; font-size: .72rem;
   }
   .topk-row.chosen .pct { color: var(--accent); }
+  .output-hint {
+    margin-top: .4rem; font-size: .72rem; color: var(--muted);
+    font-family: var(--sans);
+  }
 
   /* ── compare mode ────────────────────────────────────────────────────── */
   .compare { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1rem; margin-top: 1.25rem; }
@@ -486,14 +506,11 @@ static const char* kIndexHtml = R"HTML(<!doctype html>
     <div class="spark" id="spark"></div>
   </div>
 
-  <div class="topk" id="topk">
-    <div class="topk-head">
-      <span class="title">Top candidates at step <span id="topkStep">—</span></span>
-      <span class="ctx">top-5 softmax probabilities</span>
-    </div>
-    <div id="topkRows"></div>
+  <div class="output-hint" id="outputHint" style="display:none">
+    hover any generated token to see the top-5 alternatives the model considered · click to pin
   </div>
 
+  <!-- floating popover injected into body on hover/click -->
   <div class="compare" id="compare" style="display:none"></div>
 </main>
 
@@ -587,7 +604,9 @@ function pushSpark(tps) {
 // ── streaming ───────────────────────────────────────────────────────────────
 function streamGenerate() {
   stopStream();
+  clearPopovers();
   compareEl.style.display = 'none';
+  $('outputHint').style.display = 'none';
 
   const prompt     = promptEl.value;
   const max_tokens = parseInt($('maxTokens').value, 10);
@@ -618,16 +637,20 @@ function streamGenerate() {
 
   es.addEventListener('token', (e) => {
     const d = JSON.parse(e.data);
-    const flash = document.createElement('span');
-    flash.className = 'tok-flash';
-    flash.textContent = d.delta;
-    genSpan.appendChild(flash);
-    setTimeout(() => {
-      const t = flash.textContent;
-      flash.replaceWith(document.createTextNode(t));
-    }, 500);
+    // Each decode step becomes an interactive <span class="tok">; the top-5
+    // candidates are embedded as a data attribute so the user can click any
+    // past token and inspect the model's distribution at that position.
+    const span = document.createElement('span');
+    span.className  = 'tok tok-flash';
+    span.textContent = d.delta;
+    span.dataset.step = d.n;
+    span.dataset.id   = d.id;
+    span.dataset.topk = JSON.stringify(d.topk || []);
+    attachPopover(span);
+    genSpan.appendChild(span);
+    setTimeout(() => span.classList.remove('tok-flash'), 500);
 
-    if (d.topk) renderTopK(d.topk, d.id, d.n);
+    $('outputHint').style.display = 'block';
 
     const elapsed = (performance.now() - t0) / 1000;
     const tps = d.n / elapsed;
@@ -657,6 +680,12 @@ function stopStream() {
   if (activeStream) { activeStream.close(); activeStream = null; }
   outEl.querySelector('.caret')?.remove();
   goBtn.disabled = false;
+}
+
+function clearPopovers() {
+  if (activePopover) { activePopover.remove(); activePopover = null; }
+  if (pinnedPopover) { pinnedPopover.remove(); pinnedPopover = null; }
+  document.querySelectorAll('.tok.active').forEach(s => s.classList.remove('active'));
 }
 
 // ── compare ─────────────────────────────────────────────────────────────────
@@ -706,27 +735,88 @@ async function compareAll() {
   }
 }
 
-// Render top-K candidates as a bar chart.
-function renderTopK(items, chosenId, step) {
-  const panel = $('topk');
-  const rows  = $('topkRows');
-  panel.classList.add('visible');
-  $('topkStep').textContent = step;
+// ── token popover: hover/click any emitted token to see top-5 ──────────────
+let activePopover = null;
+let pinnedPopover = null;
 
+function buildPopover(step, chosenId, items) {
+  const el = document.createElement('div');
+  el.className = 'tok-popover';
   const maxP = Math.max(...items.map(x => x.p));
-  rows.innerHTML = items.map((x, i) => {
+  const rows = items.map((x, i) => {
     const picked = x.id === chosenId;
-    const w = (x.p / maxP * 100).toFixed(1);
-    const label = x.token.replace(/\n/g, '␤').replace(/\t/g, '→').replace(/ /g, '·');
-    return `
-      <div class="topk-row ${picked ? 'chosen' : ''}">
-        <span class="rank">#${i+1}</span>
-        <span class="tok">${escapeHtml(label)}</span>
-        <div class="bar-track"><div class="bar-fill" style="width:${w}%"></div></div>
-        <span class="pct">${(x.p*100).toFixed(1)}%</span>
-      </div>`;
+    const w      = (x.p / maxP * 100).toFixed(1);
+    const label  = x.token.replace(/\n/g, '␤').replace(/\t/g, '→').replace(/ /g, '·');
+    return `<div class="topk-row ${picked ? 'chosen' : ''}">
+      <span class="rank">#${i+1}</span>
+      <span class="tok-str">${escapeHtml(label)}</span>
+      <div class="bar-track"><div class="bar-fill" style="width:${w}%"></div></div>
+      <span class="pct">${(x.p*100).toFixed(1)}%</span>
+    </div>`;
   }).join('');
+  el.innerHTML = `
+    <div class="pop-head">
+      <span class="pop-title">Top candidates</span>
+      <span class="pop-step">step ${step}</span>
+    </div>
+    ${rows}`;
+  return el;
 }
+
+function positionPopover(el, anchor) {
+  const r = anchor.getBoundingClientRect();
+  document.body.appendChild(el);
+  const w = el.offsetWidth;
+  const h = el.offsetHeight;
+  let left = r.left + r.width / 2 - w / 2;
+  let top  = r.top - h - 10;
+  if (top < 10)                   top  = r.bottom + 10;
+  if (left < 10)                  left = 10;
+  if (left + w > window.innerWidth - 10) left = window.innerWidth - w - 10;
+  el.style.left = left + 'px';
+  el.style.top  = top  + 'px';
+}
+
+function attachPopover(span) {
+  span.addEventListener('mouseenter', () => {
+    if (pinnedPopover) return;
+    if (activePopover) activePopover.remove();
+    const items = JSON.parse(span.dataset.topk);
+    if (!items.length) return;
+    activePopover = buildPopover(span.dataset.step, parseInt(span.dataset.id, 10), items);
+    positionPopover(activePopover, span);
+    span.classList.add('active');
+  });
+  span.addEventListener('mouseleave', () => {
+    if (pinnedPopover) return;
+    if (activePopover) { activePopover.remove(); activePopover = null; }
+    span.classList.remove('active');
+  });
+  span.addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (pinnedPopover) {
+      pinnedPopover.remove();
+      pinnedPopover = null;
+      document.querySelectorAll('.tok.active').forEach(s => s.classList.remove('active'));
+    }
+    const items = JSON.parse(span.dataset.topk);
+    if (!items.length) return;
+    pinnedPopover = buildPopover(span.dataset.step, parseInt(span.dataset.id, 10), items);
+    pinnedPopover.classList.add('pinned');
+    positionPopover(pinnedPopover, span);
+    span.classList.add('active');
+    activePopover = null;
+  });
+}
+
+// click outside unpins
+document.addEventListener('click', (e) => {
+  if (pinnedPopover && !pinnedPopover.contains(e.target)) {
+    pinnedPopover.remove();
+    pinnedPopover = null;
+    document.querySelectorAll('.tok.active').forEach(s => s.classList.remove('active'));
+  }
+});
 
 function escapeHtml(s) {
   return (s || '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
