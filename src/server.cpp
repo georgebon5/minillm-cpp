@@ -382,6 +382,11 @@ static const char* kIndexHtml = R"HTML(<!doctype html>
   .compare .fp32 .tag { color: var(--accent); background: rgba(124, 111, 245, 0.12); }
   .compare .int8 .tag { color: var(--cyan);   background: rgba(56, 189, 248, 0.12); }
   .compare .int4 .tag { color: var(--amber);  background: rgba(251, 191, 36, 0.12); }
+  .compare .col.running {
+    box-shadow: 0 0 0 1px rgba(124, 111, 245, 0.45);
+    animation: pulse 1.6s ease-in-out infinite;
+  }
+  .compare .perf .muted { color: var(--muted); }
   .compare .perf {
     font-family: var(--mono); font-size: .74rem; color: var(--fg-dim);
     font-variant-numeric: tabular-nums;
@@ -716,46 +721,76 @@ function clearPopovers() {
 }
 
 // ── compare ─────────────────────────────────────────────────────────────────
+// Stream each quant level into its own column so the user sees progress live,
+// instead of blocking on a single POST that can take minutes on larger models.
+function streamIntoColumn(quant, prompt, max_tokens, model, column) {
+  return new Promise((resolve) => {
+    const text = column.querySelector('.text .gen');
+    const perfTop = column.querySelector('.col-head .perf');
+    const perfBot = column.querySelector('.perf.bot');
+    const temperature = parseFloat(tempEl.value);
+    const top_p       = parseFloat(topPEl.value);
+    const rep_penalty = parseFloat(repEl.value);
+    const url = `/stream?prompt=${encodeURIComponent(prompt)}&max_tokens=${max_tokens}` +
+                `&quant=${quant}&model=${encodeURIComponent(model)}` +
+                `&temperature=${temperature}&top_p=${top_p}&rep_penalty=${rep_penalty}`;
+    const es = new EventSource(url);
+    const t0 = performance.now();
+    column.classList.add('running');
+    es.addEventListener('token', (e) => {
+      const d = JSON.parse(e.data);
+      text.textContent += d.delta;
+      const elapsed = performance.now() - t0;
+      perfTop.innerHTML = `<span class="num">${Math.round(d.n * 1000 / elapsed)}</span> tok/s`;
+    });
+    es.addEventListener('done', (e) => {
+      const d = JSON.parse(e.data);
+      perfTop.innerHTML = `<span class="num">${d.tok_per_sec}</span> tok/s`;
+      perfBot.innerHTML = `<span class="num">${d.n_tokens}</span> tokens · <span class="num">${d.ms}</span>ms`;
+      column.classList.remove('running');
+      es.close(); resolve();
+    });
+    es.onerror = () => { column.classList.remove('running'); es.close(); resolve(); };
+  });
+}
+
 async function compareAll() {
   stopStream();
+  clearPopovers();
   const prompt     = promptEl.value;
   const max_tokens = parseInt($('maxTokens').value, 10);
+  const model      = $('modelSel').value;
   if (!prompt.trim()) return;
 
   compareBtn.disabled = true; goBtn.disabled = true;
-  outEl.innerHTML = '<span class="placeholder">Running fp32, int8, and int4 in sequence…</span>';
+  outEl.innerHTML = '<span class="placeholder">Streaming fp32, int8, int4 side-by-side — each column fills as its generation runs.</span>';
+  $('outputHint').style.display = 'none';
   compareEl.innerHTML = '';
   compareEl.style.display = 'grid';
   $('statQ').textContent = 'all';
 
+  // Create the three columns up front so the user sees scaffolding immediately.
+  const cols = {};
+  for (const q of ['fp32', 'int8', 'int4']) {
+    const col = document.createElement('div');
+    col.className = 'col ' + q;
+    col.innerHTML = `
+      <div class="col-head">
+        <span class="tag">${q}</span>
+        <span class="perf"><span class="muted">queued</span></span>
+      </div>
+      <div class="text"><span class="prompt-txt">${escapeHtml(prompt)}</span><span class="gen"></span></div>
+      <div class="perf bot"><span class="muted">—</span></div>
+    `;
+    compareEl.appendChild(col);
+    cols[q] = col;
+  }
+
   try {
-    const r = await fetch('/compare', {
-      method: 'POST', headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({
-        prompt, max_tokens,
-        model:       $('modelSel').value,
-        temperature: parseFloat(tempEl.value),
-        top_p:       parseFloat(topPEl.value),
-        rep_penalty: parseFloat(repEl.value),
-      }),
-    });
-    const data = await r.json();
-    compareEl.innerHTML = '';
     for (const q of ['fp32', 'int8', 'int4']) {
-      const d = data[q];
-      const col = document.createElement('div');
-      col.className = 'col ' + q;
-      col.innerHTML = `
-        <div class="col-head">
-          <span class="tag">${q}</span>
-          <span class="perf"><span class="num">${d.tok_per_sec}</span> tok/s</span>
-        </div>
-        <div class="text"><span class="prompt-txt">${escapeHtml(prompt)}</span>${escapeHtml(d.generated)}</div>
-        <div class="perf"><span class="num">${d.n_tokens}</span> tokens · <span class="num">${d.ms}</span>ms</div>
-      `;
-      compareEl.appendChild(col);
+      await streamIntoColumn(q, prompt, max_tokens, model, cols[q]);
     }
-    outEl.innerHTML = '<span class="placeholder">Comparison below — same prompt across three quantization levels.</span>';
+    outEl.innerHTML = '<span class="placeholder">Comparison complete — same prompt across three quantization levels.</span>';
   } catch (e) {
     outEl.innerHTML = `<span class="placeholder" style="color: var(--red)">Error: ${escapeHtml(e.message)}</span>`;
   } finally {
