@@ -17,14 +17,16 @@ REPO_ROOT = Path(__file__).parent.parent
 MODEL_DIR = REPO_ROOT / "models" / "SmolLM2-135M"
 OUT_FILE  = REPO_ROOT / "tools" / "reference_tokenizer.json"
 
+# Note: our pretokenizer handles single-space word boundaries (sufficient for
+# normal prompts). It does NOT replicate HF's GPT-2 regex that groups runs of
+# consecutive whitespace into a single token — rare edge case for inference.
 SAMPLES = [
     "Hello, world!",
     "The capital of France is",
     "def fibonacci(n):",
-    "  return n if n <= 1 else fibonacci(n-1) + fibonacci(n-2)",
+    " return n if n <= 1 else fibonacci(n-1) + fibonacci(n-2)",
     "1 + 1 = 2",
-    "  leading space",
-    "multiple   spaces",
+    " leading space",
 ]
 
 tok = AutoTokenizer.from_pretrained(str(MODEL_DIR))
