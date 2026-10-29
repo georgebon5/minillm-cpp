@@ -28,12 +28,13 @@ static float max_abs_error(const Tensor& a, const Tensor& b) {
 
 // ── INT8 quantization ─────────────────────────────────────────────────────────
 
-TEST_CASE("quantize I8: scale is positive", "[quantize]") {
+TEST_CASE("quantize I8: per-row scales are positive", "[quantize]") {
     std::srand(1);
     Tensor w({4, 8}, DType::F32);
     rand_fill(w);
     auto qw = quantize(w, DType::I8);
-    REQUIRE(qw.scale > 0.f);
+    REQUIRE(qw.scales.size() == 4);
+    for (float s : qw.scales) REQUIRE(s > 0.f);
 }
 
 TEST_CASE("quantize I8: quantized values in [-127, 127]", "[quantize]") {

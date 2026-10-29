@@ -115,15 +115,17 @@ Tensor gqa_attention(const Tensor& x,
                      int n_kv_heads,
                      int pos_offset = 0);
 
-// ── Quantization (post-training, symmetric per-tensor) ────────────────────────
+// ── Quantization (post-training, symmetric per-channel) ──────────────────────
 
-// Quantized weight tensor: symmetric per-tensor, FP32 activations (W8A16 / W4A16).
+// Quantized weight tensor: symmetric per-row (per-output-channel), FP32 activations.
+// Per-row scales dramatically reduce INT4 error vs per-tensor by giving each
+// output neuron its own dynamic range.
 struct QuantTensor {
-    Tensor data;   // DType::I8 (int8_t) or DType::I4 (nibble-packed uint8_t)
-    float  scale;  // dequant: w_f32 ≈ q * scale
+    Tensor              data;    // DType::I8 or DType::I4 (nibble-packed)
+    std::vector<float>  scales;  // one scale per output row; w ≈ q[j,k] * scales[j]
 };
 
-// Quantize a F32 weight matrix to I8 or I4 (symmetric per-tensor).
+// Quantize a F32 weight matrix to I8 or I4 (symmetric per-row).
 //   w      : [out_features, in_features]  F32  — weight matrix
 //   qdtype : DType::I8 or DType::I4
 QuantTensor quantize(const Tensor& w, DType qdtype);
