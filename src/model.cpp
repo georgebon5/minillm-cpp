@@ -1,8 +1,13 @@
 #include "minillm/model.hpp"
+#include <algorithm>
 #include <cassert>
+#include <cmath>
 #include <cstring>
+#include <random>
 #include <stdexcept>
 #include <string>
+#include <utility>
+#include <vector>
 
 namespace minillm {
 
@@ -214,39 +219,71 @@ Tensor forward_one(const ModelWeights& w,
 
 // ── Greedy generation loop ────────────────────────────────────────────────────
 
+// Pick the next token given raw logits + sampling params.
+// temperature == 0 → greedy argmax; otherwise top-K softmax sampling.
+static int32_t sample_next(const float* logits, size_t vocab,
+                           const SamplingParams& sp, std::mt19937& rng) {
+    if (sp.temperature <= 0.0f) {
+        int32_t best = 0; float best_val = logits[0];
+        for (size_t i = 1; i < vocab; ++i)
+            if (logits[i] > best_val) { best_val = logits[i]; best = static_cast<int32_t>(i); }
+        return best;
+    }
+
+    const size_t k   = std::min<size_t>(static_cast<size_t>(std::max(1, sp.top_k)), vocab);
+    const float  inv = 1.0f / sp.temperature;
+
+    std::vector<std::pair<float, int32_t>> scored(vocab);
+    for (size_t i = 0; i < vocab; ++i)
+        scored[i] = { logits[i] * inv, static_cast<int32_t>(i) };
+
+    std::partial_sort(scored.begin(), scored.begin() + k, scored.end(),
+                      [](auto& a, auto& b){ return a.first > b.first; });
+
+    // Numerically stable softmax over the top-K.
+    float max_v = scored[0].first;
+    std::vector<float> probs(k);
+    float sum = 0.f;
+    for (size_t i = 0; i < k; ++i) {
+        probs[i] = std::exp(scored[i].first - max_v);
+        sum += probs[i];
+    }
+    for (auto& p : probs) p /= sum;
+
+    std::uniform_real_distribution<float> u(0.0f, 1.0f);
+    float r = u(rng), acc = 0.f;
+    for (size_t i = 0; i < k; ++i) {
+        acc += probs[i];
+        if (r < acc) return scored[i].second;
+    }
+    return scored[k - 1].second;
+}
+
 std::vector<int32_t> generate(const ModelWeights&       w,
                                const ModelConfig&         cfg,
                                const RopeCache&           rope,
                                std::span<const int32_t>   prompt_ids,
                                int                        max_new_tokens,
-                               int32_t                    eos_id) {
+                               int32_t                    eos_id,
+                               const SamplingParams&      sampling) {
     KVCache kv = make_kvcache(cfg);
 
-    // Prefill: run every prompt token through forward_one to populate the KV
-    // cache; keep only the last token's logits to seed the decode loop.
     Tensor logits;
     for (int32_t id : prompt_ids)
         logits = forward_one(w, cfg, rope, id, kv);
 
-    // Decode: argmax the current logits, emit the token, then step forward.
     const size_t vocab = static_cast<size_t>(cfg.vocab_size);
     std::vector<int32_t> generated;
     generated.reserve(static_cast<size_t>(max_new_tokens));
 
+    std::mt19937 rng(sampling.seed ? sampling.seed : std::random_device{}());
+
     for (int step = 0; step < max_new_tokens; ++step) {
-        const float* lp = logits.data_as<float>();
-
-        int32_t next_id = 0;
-        float   best    = lp[0];
-        for (size_t v = 1; v < vocab; ++v)
-            if (lp[v] > best) { best = lp[v]; next_id = static_cast<int32_t>(v); }
-
+        int32_t next_id = sample_next(logits.data_as<float>(), vocab, sampling, rng);
         generated.push_back(next_id);
         if (next_id == eos_id) break;
-
         logits = forward_one(w, cfg, rope, next_id, kv);
     }
-
     return generated;
 }
 

@@ -21,6 +21,7 @@
 #include <cstring>
 #include <filesystem>
 #include <iostream>
+#include <random>
 #include <string>
 #include <vector>
 
@@ -391,6 +392,12 @@ static const char* kIndexHtml = R"HTML(<!doctype html>
         <option value="int4">int4</option>
       </select>
     </div>
+    <div class="field">
+      <label>temp</label>
+      <input id="temperature" type="range" min="0" max="1.5" step="0.1" value="0.8"
+             style="width:80px;accent-color:var(--accent);">
+      <span id="tempVal" class="mono" style="font-size:.78rem;color:var(--fg);min-width:1.8rem;">0.8</span>
+    </div>
     <span class="hint"><kbd>⌘⏎</kbd> run · <kbd>esc</kbd> stop</span>
     <button class="btn" id="compareBtn">Compare all</button>
     <button class="btn primary" id="goBtn">Generate</button>
@@ -419,6 +426,12 @@ const compareEl = $('compare');
 const goBtn   = $('goBtn');
 const compareBtn = $('compareBtn');
 const spark   = $('spark');
+const tempEl  = $('temperature');
+const tempValEl = $('tempVal');
+
+tempEl.addEventListener('input', () => {
+  tempValEl.textContent = parseFloat(tempEl.value).toFixed(1);
+});
 
 let activeStream = null;
 let tpsHistory = [];
@@ -480,7 +493,8 @@ function streamGenerate() {
   outEl.querySelector('.prompt-txt').textContent = prompt;
   const genSpan = outEl.querySelector('.gen');
 
-  const url = `/stream?prompt=${encodeURIComponent(prompt)}&max_tokens=${max_tokens}&quant=${quant}`;
+  const temperature = parseFloat(tempEl.value);
+  const url = `/stream?prompt=${encodeURIComponent(prompt)}&max_tokens=${max_tokens}&quant=${quant}&temperature=${temperature}`;
   const es  = new EventSource(url);
   activeStream = es;
 
@@ -543,7 +557,7 @@ async function compareAll() {
   try {
     const r = await fetch('/compare', {
       method: 'POST', headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({ prompt, max_tokens }),
+      body: JSON.stringify({ prompt, max_tokens, temperature: parseFloat(tempEl.value) }),
     });
     const data = await r.json();
     compareEl.innerHTML = '';
@@ -584,222 +598,6 @@ document.addEventListener('keydown', (e) => {
 
 loadInfo();
 </script>
-</body>
-
-<script>
-const $ = (id) => document.getElementById(id);
-const promptEl = $('prompt');
-const outEl    = $('out');
-const compareEl = $('compare');
-const goBtn   = $('goBtn');
-const compareBtn = $('compareBtn');
-const spark   = $('spark');
-
-let activeStream = null;
-let tpsHistory = [];
-
-// ── boot sequence ───────────────────────────────────────────────────────────
-async function playBoot() {
-  const lines = [
-    '> initializing minillm runtime',
-    '> loading model weights into memory',
-    '> building rope cache [max_pos=2048, head_dim=64]',
-    '> opening tokenizer: vocab=49152',
-    '> starting http server on loopback:8080',
-    '> system ready',
-  ];
-  const container = $('bootLines');
-  for (const text of lines) {
-    const div = document.createElement('div');
-    div.className = 'line';
-    div.textContent = text;
-    container.appendChild(div);
-    div.style.opacity = 1;
-    div.style.width = '0';
-    const target = text.length + 'ch';
-    div.style.transition = 'width .18s steps(' + text.length + ')';
-    requestAnimationFrame(() => { div.style.width = target; });
-    await sleep(170);
-    div.classList.add('ok');
-  }
-  await sleep(300);
-  $('boot').classList.add('hide');
-  setTimeout(() => $('boot').remove(), 400);
-}
-const sleep = (ms) => new Promise(r => setTimeout(r, ms));
-
-// ── clock ───────────────────────────────────────────────────────────────────
-function tickClock() {
-  const d = new Date();
-  const pad = (n) => String(n).padStart(2, '0');
-  $('clock').textContent = `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
-}
-setInterval(tickClock, 1000); tickClock();
-
-// ── model info ──────────────────────────────────────────────────────────────
-async function loadInfo() {
-  try {
-    const r = await fetch('/info');
-    const d = await r.json();
-    $('iVocab').textContent   = d.vocab.toLocaleString();
-    $('iLayers').textContent  = d.layers;
-    $('iHidden').textContent  = d.hidden;
-    $('iHeads').textContent   = d.n_heads;
-    $('iKvHeads').textContent = d.n_kv_heads + ' (GQA)';
-    $('iHeadDim').textContent = d.head_dim;
-    $('sizeFp32').textContent = fmtMB(d.mem_fp32_bytes);
-    $('sizeInt8').textContent = fmtMB(d.mem_int8_bytes);
-    $('sizeInt4').textContent = fmtMB(d.mem_int4_bytes);
-    $('barInt8').style.width = (100 * d.mem_int8_bytes / d.mem_fp32_bytes) + '%';
-    $('barInt4').style.width = (100 * d.mem_int4_bytes / d.mem_fp32_bytes) + '%';
-    $('multInt8').textContent = (d.mem_fp32_bytes/d.mem_int8_bytes).toFixed(1) + '×';
-    $('multInt4').textContent = (d.mem_fp32_bytes/d.mem_int4_bytes).toFixed(1) + '×';
-  } catch (e) { console.warn('info failed', e); }
-}
-function fmtMB(b) { return (b/1024/1024).toFixed(1) + 'MB'; }
-
-// ── sparkline ───────────────────────────────────────────────────────────────
-function pushSpark(tps) {
-  tpsHistory.push(tps);
-  if (tpsHistory.length > 40) tpsHistory.shift();
-  const max = Math.max(1, ...tpsHistory);
-  spark.innerHTML = '';
-  for (const v of tpsHistory) {
-    const s = document.createElement('span');
-    s.style.height = Math.max(2, 20 * v / max) + 'px';
-    spark.appendChild(s);
-  }
-}
-
-// ── streaming ───────────────────────────────────────────────────────────────
-function streamGenerate() {
-  stopStream();
-  compareEl.style.display = 'none';
-
-  const prompt     = promptEl.value;
-  const max_tokens = parseInt($('maxTokens').value, 10);
-  const quant      = $('quant').value;
-
-  if (!prompt.trim()) return;
-
-  goBtn.disabled = true;
-  tpsHistory = []; spark.innerHTML = '';
-  $('statN').textContent  = '0';
-  $('statMs').textContent = '0ms';
-  $('statQ').textContent  = quant;
-
-  outEl.innerHTML = '<span class="prompt"></span><span class="gen"></span><span class="caret"></span>';
-  outEl.querySelector('.prompt').textContent = prompt;
-  const genSpan = outEl.querySelector('.gen');
-
-  const url = `/stream?prompt=${encodeURIComponent(prompt)}&max_tokens=${max_tokens}&quant=${quant}`;
-  const es  = new EventSource(url);
-  activeStream = es;
-
-  const t0 = performance.now();
-
-  es.addEventListener('token', (e) => {
-    const d = JSON.parse(e.data);
-    // Append the delta as a flashing span, then collapse once animation ends
-    const flash = document.createElement('span');
-    flash.className = 'tok-flash';
-    flash.textContent = d.delta;
-    genSpan.appendChild(flash);
-    setTimeout(() => {
-      // merge the flashed span's text into the parent to keep DOM small
-      const t = flash.textContent;
-      flash.replaceWith(document.createTextNode(t));
-    }, 500);
-
-    const elapsed = (performance.now() - t0) / 1000;
-    const tps = d.n / elapsed;
-    pushSpark(tps);
-    $('statN').textContent  = d.n;
-    $('statMs').textContent = Math.round(elapsed * 1000) + 'ms';
-  });
-
-  es.addEventListener('done', (e) => {
-    const d = JSON.parse(e.data);
-    outEl.querySelector('.caret')?.remove();
-    $('statN').textContent  = d.n_tokens;
-    $('statMs').textContent = d.ms + 'ms';
-    es.close(); activeStream = null; goBtn.disabled = false;
-  });
-
-  es.onerror = () => {
-    outEl.querySelector('.caret')?.remove();
-    $('statMs').innerHTML = '<span class="err">LOST</span>';
-    es.close(); activeStream = null; goBtn.disabled = false;
-  };
-}
-
-function stopStream() {
-  if (activeStream) { activeStream.close(); activeStream = null; }
-  outEl.querySelector('.caret')?.remove();
-  goBtn.disabled = false;
-}
-
-// ── compare ─────────────────────────────────────────────────────────────────
-async function compareAll() {
-  stopStream();
-  const prompt     = promptEl.value;
-  const max_tokens = parseInt($('maxTokens').value, 10);
-  if (!prompt.trim()) return;
-
-  compareBtn.disabled = true; goBtn.disabled = true;
-  outEl.innerHTML = '<span class="prompt">// running three quantization levels in parallel…</span>';
-  compareEl.innerHTML = '';
-  compareEl.style.display = 'grid';
-  $('statQ').textContent = 'all';
-
-  try {
-    const r = await fetch('/compare', {
-      method: 'POST', headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({ prompt, max_tokens }),
-    });
-    const data = await r.json();
-    compareEl.innerHTML = '';
-    for (const q of ['fp32', 'int8', 'int4']) {
-      const d = data[q];
-      const col = document.createElement('div');
-      col.className = 'col ' + q;
-      col.dataset.q = q;
-      col.innerHTML = `
-        <div class="perf">
-          <span>${d.n_tokens} tok · <span class="v">${d.ms}ms</span></span>
-          <span><span class="v">${d.tok_per_sec}</span> tok/s</span>
-        </div>
-        <div class="text"><span class="prompt">${escapeHtml(prompt)}</span>${escapeHtml(d.generated)}</div>
-      `;
-      compareEl.appendChild(col);
-    }
-    outEl.innerHTML = '<span class="prompt">// comparison complete — scroll for 3-way diff</span>';
-  } catch (e) {
-    outEl.innerHTML = `<span style="color: var(--red)">// error: ${escapeHtml(e.message)}</span>`;
-  } finally {
-    compareBtn.disabled = false; goBtn.disabled = false;
-  }
-}
-
-function escapeHtml(s) {
-  return (s || '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-}
-
-goBtn.addEventListener('click', streamGenerate);
-compareBtn.addEventListener('click', compareAll);
-promptEl.addEventListener('keydown', (e) => {
-  if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) streamGenerate();
-});
-document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape') stopStream();
-});
-
-// init
-loadInfo();
-playBoot();
-</script>
-</body>
-</html>
 )HTML";
 
 // ── Globals set once at startup ──────────────────────────────────────────────
@@ -961,13 +759,23 @@ struct GenResult {
 };
 
 static GenResult run_generate(ServerState& st, const ModelWeights& w,
-                               const std::string& prompt, int max_tokens) {
+                               const std::string& prompt, int max_tokens,
+                               const SamplingParams& sampling) {
     auto prompt_ids = encode(st.tok, prompt);
     auto t0 = clk::now();
-    auto ids = generate(w, st.cfg, st.rope, prompt_ids, max_tokens, st.tok.eos_id);
+    auto ids = generate(w, st.cfg, st.rope, prompt_ids, max_tokens, st.tok.eos_id, sampling);
     int ms = static_cast<int>(std::chrono::duration<double, std::milli>(clk::now() - t0).count());
     double tps = ids.empty() ? 0 : static_cast<double>(ids.size()) / (ms / 1000.0);
     return { decode(st.tok, ids), static_cast<int>(ids.size()), ms, static_cast<int>(tps) };
+}
+
+// Parse sampling params from a JSON body or query string helpers.
+static SamplingParams parse_sampling(const json& req) {
+    SamplingParams sp;
+    sp.temperature = std::max(0.0f, std::min(2.0f, req.value("temperature", 0.0f)));
+    sp.top_k       = std::max(1, std::min(200, req.value("top_k", 40)));
+    sp.seed        = req.value("seed", static_cast<uint64_t>(0));
+    return sp;
 }
 
 // ── Endpoint handlers ────────────────────────────────────────────────────────
@@ -1002,7 +810,7 @@ static std::string handle_generate(ServerState& st, const std::string& body) {
         return http_response(400, "application/json", R"({"error":"empty prompt"})");
 
     const ModelWeights& w = ensure_weights(st, quant);
-    auto r = run_generate(st, w, prompt, max_tokens);
+    auto r = run_generate(st, w, prompt, max_tokens, parse_sampling(req));
     json j = {{"prompt",prompt},{"generated",r.generated},{"n_tokens",r.n_tokens},
               {"ms",r.ms},{"tok_per_sec",r.tok_per_sec}};
     return http_response(200, "application/json", safe_dump(j));
@@ -1020,10 +828,14 @@ static std::string handle_compare(ServerState& st, const std::string& body) {
     if (prompt.empty())
         return http_response(400, "application/json", R"({"error":"empty prompt"})");
 
+    SamplingParams base_sp = parse_sampling(req);
+    // Use a fixed seed across all three so the same tokens are compared.
+    if (base_sp.seed == 0) base_sp.seed = static_cast<uint64_t>(std::random_device{}());
+
     json result;
     for (const char* q : {"fp32", "int8", "int4"}) {
         const ModelWeights& w = ensure_weights(st, q);
-        auto r = run_generate(st, w, prompt, max_tokens);
+        auto r = run_generate(st, w, prompt, max_tokens, base_sp);
         result[q] = {{"generated",r.generated},{"n_tokens",r.n_tokens},
                      {"ms",r.ms},{"tok_per_sec",r.tok_per_sec}};
     }
@@ -1036,6 +848,12 @@ static void handle_stream(ServerState& st, int sock, const std::string& qs) {
     int         max_tokens = std::max(1, std::min(256, std::atoi(query_param(qs, "max_tokens").c_str())));
     std::string quant      = query_param(qs, "quant");
     if (quant.empty()) quant = "fp32";
+
+    SamplingParams sp;
+    std::string t_str = query_param(qs, "temperature");
+    std::string k_str = query_param(qs, "top_k");
+    if (!t_str.empty()) sp.temperature = std::max(0.0f, std::min(2.0f, std::stof(t_str)));
+    if (!k_str.empty()) sp.top_k       = std::max(1, std::min(200, std::atoi(k_str.c_str())));
 
     if (prompt.empty()) {
         send_all(sock, http_response(400, "text/plain", "empty prompt"));
@@ -1073,11 +891,34 @@ static void handle_stream(ServerState& st, int sock, const std::string& qs) {
     auto t0 = clk::now();
     const size_t vocab = static_cast<size_t>(st.cfg.vocab_size);
 
+    std::mt19937 rng(std::random_device{}());
+
+    auto sample = [&](const float* lp) -> int32_t {
+        if (sp.temperature <= 0.0f) {
+            int32_t best = 0; float best_val = lp[0];
+            for (size_t v = 1; v < vocab; ++v)
+                if (lp[v] > best_val) { best_val = lp[v]; best = static_cast<int32_t>(v); }
+            return best;
+        }
+        const size_t k   = std::min<size_t>(static_cast<size_t>(sp.top_k), vocab);
+        const float  inv = 1.0f / sp.temperature;
+        std::vector<std::pair<float, int32_t>> scored(vocab);
+        for (size_t v = 0; v < vocab; ++v)
+            scored[v] = { lp[v] * inv, static_cast<int32_t>(v) };
+        std::partial_sort(scored.begin(), scored.begin() + k, scored.end(),
+                          [](auto& a, auto& b){ return a.first > b.first; });
+        float max_v = scored[0].first; float sum = 0.f;
+        std::vector<float> probs(k);
+        for (size_t i = 0; i < k; ++i) { probs[i] = std::exp(scored[i].first - max_v); sum += probs[i]; }
+        for (auto& p : probs) p /= sum;
+        std::uniform_real_distribution<float> u(0.f, 1.f);
+        float r = u(rng), acc = 0.f;
+        for (size_t i = 0; i < k; ++i) { acc += probs[i]; if (r < acc) return scored[i].second; }
+        return scored[k - 1].second;
+    };
+
     for (int step = 0; step < max_tokens; ++step) {
-        const float* lp = logits.data_as<float>();
-        int32_t next_id = 0; float best = lp[0];
-        for (size_t v = 1; v < vocab; ++v)
-            if (lp[v] > best) { best = lp[v]; next_id = static_cast<int32_t>(v); }
+        int32_t next_id = sample(logits.data_as<float>());
 
         gen_ids.push_back(next_id);
 
