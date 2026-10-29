@@ -35,336 +35,315 @@ static const char* kIndexHtml = R"HTML(<!doctype html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>MINILLM.CPP · ONLINE</title>
+<title>minillm.cpp · playground</title>
 <style>
   :root {
     color-scheme: dark;
-    --bg: #050807;
-    --bg2: #0a0f0d;
-    --panel: #0d1512;
-    --border: #163026;
-    --border-hot: #1f5944;
-    --fg: #c7f5db;
-    --dim: #4a7a62;
-    --mute: #2d4a3d;
-    --phos: #00ff88;
-    --cyan: #22e8ff;
-    --amber: #ffb84d;
-    --red: #ff3344;
+    --bg: #0a0a0c;
+    --surface: #121216;
+    --surface-2: #16161b;
+    --border: #22222a;
+    --border-strong: #2e2e38;
+    --fg: #ededf0;
+    --fg-dim: #a3a3ac;
+    --muted: #6b6b76;
+    --accent: #7c6ff5;        /* electric violet */
+    --accent-dim: rgba(124, 111, 245, 0.15);
+    --cyan: #38bdf8;
+    --amber: #fbbf24;
+    --red: #f87171;
+    --green: #4ade80;
+    --sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
     --mono: "JetBrains Mono", "SF Mono", ui-monospace, Menlo, monospace;
   }
 
-  @keyframes scan { 0% { transform: translateY(-100%); } 100% { transform: translateY(100vh); } }
-  @keyframes flicker { 0%, 100% { opacity: 1; } 50% { opacity: .97; } }
-  @keyframes pulse-dot { 0%, 100% { opacity: 1; } 50% { opacity: .3; } }
-  @keyframes caret-blink { 0%, 49% { opacity: 1; } 50%, 100% { opacity: 0; } }
-  @keyframes token-flash {
-    0% { background: rgba(0, 255, 136, 0.25); color: var(--phos); }
-    100% { background: transparent; color: var(--fg); }
+  @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+  @keyframes caret { 0%, 49% { opacity: 1; } 50%, 100% { opacity: 0; } }
+  @keyframes tokenIn {
+    from { color: var(--accent); background: var(--accent-dim); }
+    to   { color: var(--fg); background: transparent; }
   }
-  @keyframes boot-type { from { width: 0; } to { width: 100%; } }
+  @keyframes fadeIn { from { opacity: 0; transform: translateY(2px); } to { opacity: 1; transform: none; } }
 
   * { box-sizing: border-box; }
-  html, body { margin: 0; padding: 0; background: var(--bg); color: var(--fg); min-height: 100%; }
+  html, body { margin: 0; padding: 0; min-height: 100%; }
   body {
-    font-family: var(--mono);
-    font-size: 13px; line-height: 1.55;
-    animation: flicker 7s infinite;
-    position: relative; overflow-x: hidden;
-    background:
-      radial-gradient(ellipse at top, #0a1510 0%, var(--bg) 60%),
-      repeating-linear-gradient(0deg,
-        rgba(0, 255, 136, 0.028) 0px,
-        rgba(0, 255, 136, 0.028) 1px,
-        transparent 1px,
-        transparent 3px);
+    background: var(--bg); color: var(--fg);
+    font-family: var(--sans); font-size: 14px; line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
   }
-  /* moving scanline */
-  body::before {
-    content: ''; position: fixed; inset: 0; pointer-events: none; z-index: 100;
-    background: linear-gradient(180deg, transparent 0%, rgba(0, 255, 136, 0.08) 50%, transparent 100%);
-    height: 100px; animation: scan 6s linear infinite;
-  }
-  /* vignette */
-  body::after {
-    content: ''; position: fixed; inset: 0; pointer-events: none; z-index: 99;
-    box-shadow: inset 0 0 180px rgba(0, 0, 0, 0.9);
-  }
+  code, .mono { font-family: var(--mono); font-feature-settings: "ss01", "cv01"; }
 
-  /* ── top status bar ──────────────────────────────────────────────────── */
-  .topbar {
+  /* ── top nav bar ─────────────────────────────────────────────────────── */
+  nav {
+    display: flex; align-items: center; gap: 1rem;
+    padding: .75rem 1.5rem;
+    border-bottom: 1px solid var(--border);
+    background: rgba(10, 10, 12, 0.8);
+    backdrop-filter: blur(8px);
     position: sticky; top: 0; z-index: 50;
-    display: flex; align-items: center; gap: 1.5rem;
-    padding: .5rem 1.25rem;
-    background: #000;
-    border-bottom: 1px solid var(--border-hot);
-    font-size: .72rem; letter-spacing: .12em; text-transform: uppercase;
-    color: var(--dim);
   }
-  .topbar .brand {
-    color: var(--phos); font-weight: 700; letter-spacing: .18em;
-    text-shadow: 0 0 8px rgba(0, 255, 136, 0.6);
+  nav .brand {
+    font-weight: 600; letter-spacing: -0.01em;
+    display: flex; align-items: center; gap: .5rem;
   }
-  .topbar .sep { color: var(--mute); }
-  .topbar .status-dot {
+  nav .brand .dot {
     display: inline-block; width: 7px; height: 7px; border-radius: 50%;
-    background: var(--phos); margin-right: .35rem;
-    box-shadow: 0 0 6px var(--phos);
-    animation: pulse-dot 2s infinite;
-    vertical-align: middle;
+    background: var(--green); box-shadow: 0 0 8px rgba(74, 222, 128, 0.4);
+    animation: pulse 2.5s ease-in-out infinite;
   }
-  .topbar .clock { margin-left: auto; color: var(--cyan); letter-spacing: .1em; }
+  nav .brand .suffix { color: var(--muted); font-weight: 400; }
+  nav .meta { color: var(--muted); font-size: .82rem; font-family: var(--mono); }
+  nav .meta .sep { color: var(--border-strong); margin: 0 .5rem; }
+  nav .spacer { flex: 1; }
+  nav a {
+    color: var(--fg-dim); text-decoration: none; font-size: .85rem;
+    padding: .25rem .5rem; border-radius: 4px;
+  }
+  nav a:hover { color: var(--fg); background: var(--surface); }
 
   main {
-    max-width: 1040px; margin: 0 auto;
-    padding: 1.5rem 1.25rem 4rem;
+    max-width: 920px; margin: 0 auto;
+    padding: 2.5rem 1.5rem 4rem;
+    animation: fadeIn .4s ease-out;
   }
 
-  /* ── banner ──────────────────────────────────────────────────────────── */
-  .banner {
-    font-size: .68rem; line-height: 1.1; color: var(--phos);
-    text-shadow: 0 0 10px rgba(0, 255, 136, 0.5);
-    white-space: pre; margin: .5rem 0 .25rem;
-    user-select: none;
+  /* ── page header ─────────────────────────────────────────────────────── */
+  .hero { margin-bottom: 2rem; }
+  .hero h1 {
+    margin: 0 0 .25rem 0;
+    font-size: 1.4rem; font-weight: 600; letter-spacing: -0.02em;
   }
-  .subbanner {
-    color: var(--dim); font-size: .72rem; letter-spacing: .18em;
-    text-transform: uppercase; margin-bottom: 1.5rem;
-    padding-bottom: .5rem; border-bottom: 1px dashed var(--mute);
-  }
-  .subbanner .k { color: var(--cyan); }
+  .hero p { margin: 0; color: var(--fg-dim); font-size: .9rem; }
 
-  /* ── HUD grid: info + memory + runtime side-by-side ──────────────────── */
-  .hud {
-    display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 1rem;
+  /* ── section labels ──────────────────────────────────────────────────── */
+  .section-label {
+    display: flex; align-items: center; gap: .5rem;
+    font-size: .72rem; font-weight: 500;
+    text-transform: uppercase; letter-spacing: 0.08em;
+    color: var(--muted);
+    margin-bottom: .5rem;
+  }
+  .section-label .line {
+    flex: 1; height: 1px; background: var(--border);
+  }
+
+  /* ── info card ────────────────────────────────────────────────────────── */
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 1rem 1.25rem;
     margin-bottom: 1.5rem;
   }
-  .panel {
-    background: var(--panel);
-    border: 1px solid var(--border);
-    position: relative;
-    padding: .75rem .9rem;
-  }
-  .panel::before {
-    content: attr(data-title);
-    position: absolute; top: -.55rem; left: .5rem;
-    background: var(--bg); padding: 0 .5rem;
-    color: var(--dim); font-size: .64rem; letter-spacing: .2em; text-transform: uppercase;
-  }
-  .panel::after {
-    content: '┐'; position: absolute; top: -.4rem; right: -1px;
-    color: var(--border-hot); font-size: 1rem; line-height: 1;
-  }
-  .kv { display: flex; justify-content: space-between; align-items: baseline; gap: .5rem; }
-  .kv .k { color: var(--dim); font-size: .72rem; letter-spacing: .05em; }
-  .kv .v { color: var(--fg); font-size: .82rem; font-variant-numeric: tabular-nums; }
-  .kv .v.hi { color: var(--phos); text-shadow: 0 0 6px rgba(0, 255, 136, 0.4); }
+  .card.pad-tight { padding: .75rem 1rem; }
 
-  /* memory bars */
-  .bar-row { display: flex; align-items: center; gap: .5rem; margin: .25rem 0; }
-  .bar-row .lbl { color: var(--dim); font-size: .7rem; min-width: 2.5rem; }
-  .bar-outer {
-    flex: 1; height: 10px; background: rgba(0, 255, 136, 0.06);
-    border: 1px solid var(--mute); position: relative;
+  .kv-grid {
+    display: grid; grid-template-columns: repeat(3, 1fr);
+    gap: .25rem 1.5rem;
   }
-  .bar-inner {
-    height: 100%; background: var(--phos);
-    box-shadow: 0 0 6px rgba(0, 255, 136, 0.5);
-    transition: width .4s ease;
+  .kv-grid .kv {
+    display: flex; justify-content: space-between; align-items: baseline;
+    padding: .3rem 0;
+    border-bottom: 1px solid transparent;
   }
-  .bar-inner.int8 { background: var(--cyan); box-shadow: 0 0 6px rgba(34, 232, 255, 0.5); }
-  .bar-inner.int4 { background: var(--amber); box-shadow: 0 0 6px rgba(255, 184, 77, 0.5); }
-  .bar-row .size { color: var(--fg); font-size: .72rem; min-width: 5rem; text-align: right; font-variant-numeric: tabular-nums; }
-  .bar-row .mult { color: var(--dim); font-size: .68rem; min-width: 2.5rem; text-align: right; }
+  .kv-grid .k { color: var(--muted); font-size: .78rem; }
+  .kv-grid .v {
+    font-family: var(--mono); font-size: .82rem;
+    font-variant-numeric: tabular-nums; color: var(--fg);
+  }
 
-  /* ── input section ───────────────────────────────────────────────────── */
-  .input-row { position: relative; margin-bottom: 1rem; }
-  .input-row::before {
-    content: '>_'; position: absolute; left: .55rem; top: .55rem;
-    color: var(--phos); font-weight: 700; letter-spacing: 0;
-    text-shadow: 0 0 6px rgba(0, 255, 136, 0.6); z-index: 1;
+  /* ── memory bars ─────────────────────────────────────────────────────── */
+  .mem-row {
+    display: grid; grid-template-columns: 2.5rem 1fr auto auto;
+    align-items: center; gap: .75rem;
+    padding: .35rem 0;
   }
+  .mem-row:not(:last-child) { border-bottom: 1px solid var(--border); }
+  .mem-row .label { color: var(--muted); font-size: .78rem; font-family: var(--mono); }
+  .mem-bar {
+    height: 6px; background: var(--surface-2); border-radius: 3px; overflow: hidden;
+  }
+  .mem-bar .fill {
+    height: 100%; background: var(--accent);
+    transition: width .4s cubic-bezier(.4, 0, .2, 1);
+    border-radius: 3px;
+  }
+  .mem-bar .fill.int8 { background: var(--cyan); }
+  .mem-bar .fill.int4 { background: var(--amber); }
+  .mem-row .size {
+    font-family: var(--mono); font-size: .8rem;
+    color: var(--fg); font-variant-numeric: tabular-nums;
+    min-width: 4.5rem; text-align: right;
+  }
+  .mem-row .mult {
+    color: var(--muted); font-family: var(--mono); font-size: .72rem;
+    min-width: 2rem; text-align: right;
+  }
+
+  /* ── prompt input ────────────────────────────────────────────────────── */
   textarea {
-    width: 100%; min-height: 72px; resize: vertical;
-    background: var(--panel); border: 1px solid var(--border);
-    color: var(--fg); padding: .55rem .9rem .55rem 2.3rem;
-    font-family: var(--mono); font-size: .9rem;
-    caret-color: var(--phos);
+    width: 100%; min-height: 68px; resize: vertical;
+    background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
+    color: var(--fg); padding: .75rem .9rem;
+    font-family: var(--mono); font-size: .9rem; line-height: 1.5;
+    transition: border-color .15s;
   }
-  textarea::placeholder { color: var(--mute); }
-  textarea:focus { outline: none; border-color: var(--border-hot);
-                   box-shadow: 0 0 0 1px var(--border-hot), 0 0 20px rgba(0, 255, 136, 0.1); }
+  textarea::placeholder { color: var(--muted); }
+  textarea:focus {
+    outline: none; border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--accent-dim);
+  }
 
+  /* ── controls ────────────────────────────────────────────────────────── */
   .controls {
-    display: flex; gap: .5rem; align-items: center; flex-wrap: wrap;
-    margin-bottom: 1rem;
-    padding: .5rem .75rem; background: var(--panel); border: 1px solid var(--border);
+    display: flex; gap: .75rem; align-items: center; flex-wrap: wrap;
+    margin: 1rem 0;
   }
-  .pill-label { color: var(--dim); font-size: .68rem; letter-spacing: .15em;
-                text-transform: uppercase; margin-right: .25rem; }
+  .field {
+    display: inline-flex; align-items: center; gap: .5rem;
+    background: var(--surface); border: 1px solid var(--border); border-radius: 6px;
+    padding: .35rem .65rem;
+  }
+  .field label { color: var(--muted); font-size: .78rem; }
   input[type=number], select {
-    background: #000; border: 1px solid var(--mute); color: var(--phos);
-    padding: .25rem .5rem; font: inherit; font-size: .78rem;
-    font-family: var(--mono); font-variant-numeric: tabular-nums;
+    background: transparent; border: none; color: var(--fg);
+    font-family: var(--mono); font-size: .82rem;
+    font-variant-numeric: tabular-nums;
   }
-  input[type=number] { width: 60px; }
-  input:focus, select:focus { outline: none; border-color: var(--phos); }
+  input[type=number] { width: 50px; }
+  input:focus, select:focus { outline: none; }
+  select { cursor: pointer; }
 
   .btn {
-    background: transparent; border: 1px solid var(--border-hot);
-    color: var(--phos); font: inherit; font-size: .75rem; font-weight: 600;
-    padding: .35rem .9rem; letter-spacing: .15em; text-transform: uppercase;
-    cursor: pointer; font-family: var(--mono);
+    background: transparent; border: 1px solid var(--border-strong);
+    color: var(--fg); font-family: var(--sans); font-size: .85rem; font-weight: 500;
+    padding: .45rem 1rem; border-radius: 6px; cursor: pointer;
     transition: all .15s;
   }
-  .btn:hover:not(:disabled) {
-    background: rgba(0, 255, 136, 0.1);
-    box-shadow: 0 0 12px rgba(0, 255, 136, 0.3);
-    color: #fff;
-  }
+  .btn:hover:not(:disabled) { background: var(--surface); border-color: var(--muted); }
+  .btn:disabled { opacity: 0.4; cursor: not-allowed; }
   .btn.primary {
-    background: var(--phos); color: #000; border-color: var(--phos);
-    box-shadow: 0 0 10px rgba(0, 255, 136, 0.4);
+    background: var(--accent); border-color: var(--accent); color: #fff;
   }
-  .btn.primary:hover:not(:disabled) { background: #4fffaa; box-shadow: 0 0 18px rgba(0, 255, 136, 0.7); }
-  .btn:disabled { opacity: .3; cursor: not-allowed; }
-  .btn.secondary { color: var(--cyan); border-color: var(--cyan); }
-  .btn.secondary:hover:not(:disabled) { background: rgba(34, 232, 255, 0.12); color: #fff; box-shadow: 0 0 12px rgba(34, 232, 255, 0.4); }
+  .btn.primary:hover:not(:disabled) {
+    background: #8d80ff; border-color: #8d80ff;
+    box-shadow: 0 2px 8px rgba(124, 111, 245, 0.3);
+  }
   .spacer { flex: 1; }
-  .hint { color: var(--mute); font-size: .68rem; letter-spacing: .1em; }
+
+  .hint { color: var(--muted); font-size: .78rem; margin-left: auto; }
   .hint kbd {
-    background: #000; border: 1px solid var(--mute); color: var(--cyan);
-    padding: 1px 6px; font-size: .66rem; font-family: var(--mono);
+    background: var(--surface); border: 1px solid var(--border);
+    border-bottom-width: 2px; border-radius: 3px;
+    padding: 1px 5px; font-family: var(--mono); font-size: .72rem;
+    color: var(--fg-dim);
   }
 
   /* ── output ──────────────────────────────────────────────────────────── */
   .output {
-    position: relative;
-    background: var(--panel); border: 1px solid var(--border);
+    background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
     padding: 1rem 1.1rem;
     min-height: 180px; white-space: pre-wrap; word-wrap: break-word;
-    font-size: .88rem; line-height: 1.7;
+    font-family: var(--mono); font-size: .88rem; line-height: 1.65;
   }
-  .output::before {
-    content: 'OUTPUT'; position: absolute; top: -.55rem; left: .5rem;
-    background: var(--bg); padding: 0 .5rem;
-    color: var(--dim); font-size: .64rem; letter-spacing: .2em;
-  }
-  .output .prompt { color: var(--dim); }
-  .output .gen { color: var(--fg); text-shadow: 0 0 4px rgba(199, 245, 219, 0.15); }
-  .tok-flash { animation: token-flash .5s ease-out; }
+  .output .prompt-txt { color: var(--muted); }
+  .output .gen { color: var(--fg); }
+  .output .placeholder { color: var(--muted); font-style: italic; }
+  .tok-flash { animation: tokenIn .5s ease-out; border-radius: 2px; padding: 0 1px; }
   .caret {
-    display: inline-block; width: 8px; height: 1em; background: var(--phos);
-    vertical-align: text-bottom; animation: caret-blink .8s infinite;
-    box-shadow: 0 0 6px var(--phos);
+    display: inline-block; width: 7px; height: 1.1em; background: var(--accent);
+    vertical-align: text-bottom; margin-left: 1px; animation: caret 1s infinite;
+    border-radius: 1px;
   }
 
-  /* ── live stats hud ──────────────────────────────────────────────────── */
-  .livestats {
+  /* ── status bar ──────────────────────────────────────────────────────── */
+  .status-bar {
     margin-top: .75rem;
-    display: grid; grid-template-columns: auto 1fr auto auto auto; gap: 1rem;
-    align-items: center;
-    padding: .5rem .9rem;
-    background: #000; border: 1px solid var(--border);
-    font-size: .72rem; letter-spacing: .08em;
+    display: flex; align-items: center; gap: 1.25rem; flex-wrap: wrap;
+    padding: .55rem .9rem;
+    background: var(--surface-2); border: 1px solid var(--border); border-radius: 6px;
+    font-size: .78rem;
   }
-  .livestats .stat-k { color: var(--dim); text-transform: uppercase; }
-  .livestats .stat-v {
-    color: var(--phos); font-variant-numeric: tabular-nums;
-    text-shadow: 0 0 4px rgba(0, 255, 136, 0.4);
+  .status-item { display: flex; align-items: center; gap: .4rem; }
+  .status-item .k { color: var(--muted); }
+  .status-item .v {
+    color: var(--fg); font-family: var(--mono);
+    font-variant-numeric: tabular-nums;
   }
-  .livestats .stat-v.cyan { color: var(--cyan); text-shadow: 0 0 4px rgba(34, 232, 255, 0.4); }
-  .livestats .stat-v.amber { color: var(--amber); text-shadow: 0 0 4px rgba(255, 184, 77, 0.4); }
-  .livestats .err { color: var(--red); }
+  .status-item.err .v { color: var(--red); }
   .spark {
-    display: flex; align-items: flex-end; height: 20px; gap: 1px;
+    display: inline-flex; align-items: flex-end; height: 16px; gap: 2px;
+    margin-left: auto;
   }
   .spark span {
-    display: inline-block; width: 3px; background: var(--phos);
-    box-shadow: 0 0 3px var(--phos);
+    display: inline-block; width: 3px; background: var(--accent);
+    border-radius: 1px; opacity: 0.75;
   }
 
   /* ── compare mode ────────────────────────────────────────────────────── */
-  .compare { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 1rem; margin-top: 1rem; }
+  .compare { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1rem; margin-top: 1.25rem; }
   .compare .col {
-    background: var(--panel); border: 1px solid var(--border);
-    padding: .9rem; display: flex; flex-direction: column; gap: .55rem;
-    position: relative;
+    background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
+    padding: 1rem; display: flex; flex-direction: column; gap: .75rem;
+    animation: fadeIn .3s ease-out;
   }
-  .compare .col::before {
-    content: attr(data-q); position: absolute; top: -.55rem; left: .5rem;
-    background: var(--bg); padding: 0 .5rem;
-    font-size: .68rem; letter-spacing: .18em; text-transform: uppercase;
+  .compare .col-head {
+    display: flex; align-items: center; justify-content: space-between;
+    padding-bottom: .55rem; border-bottom: 1px solid var(--border);
   }
-  .compare .col.fp32::before { color: var(--phos); }
-  .compare .col.int8::before { color: var(--cyan); }
-  .compare .col.int4::before { color: var(--amber); }
-  .compare .col.fp32 { border-color: var(--border-hot); }
-  .compare .col.int8 { border-color: #1f4958; }
-  .compare .col.int4 { border-color: #5c4420; }
+  .compare .col-head .tag {
+    font-family: var(--mono); font-size: .72rem; font-weight: 500;
+    padding: 2px 7px; border-radius: 4px;
+    background: var(--surface-2);
+  }
+  .compare .fp32 .tag { color: var(--accent); background: rgba(124, 111, 245, 0.12); }
+  .compare .int8 .tag { color: var(--cyan);   background: rgba(56, 189, 248, 0.12); }
+  .compare .int4 .tag { color: var(--amber);  background: rgba(251, 191, 36, 0.12); }
   .compare .perf {
-    display: flex; justify-content: space-between; font-size: .68rem;
-    color: var(--dim); letter-spacing: .1em;
-    padding-bottom: .5rem; border-bottom: 1px dashed var(--mute);
+    font-family: var(--mono); font-size: .74rem; color: var(--fg-dim);
+    font-variant-numeric: tabular-nums;
   }
-  .compare .perf .v { color: var(--fg); font-variant-numeric: tabular-nums; }
+  .compare .perf .num { color: var(--fg); }
   .compare .text {
-    font-size: .78rem; line-height: 1.65; white-space: pre-wrap; word-wrap: break-word;
-    min-height: 120px; max-height: 300px; overflow-y: auto; color: var(--fg);
+    font-family: var(--mono); font-size: .78rem; line-height: 1.6;
+    white-space: pre-wrap; word-wrap: break-word;
+    min-height: 120px; max-height: 300px; overflow-y: auto;
+    color: var(--fg);
   }
-  .compare .text .prompt { color: var(--dim); }
+  .compare .text .prompt-txt { color: var(--muted); }
 
-  /* ── boot overlay ────────────────────────────────────────────────────── */
-  .boot {
-    position: fixed; inset: 0; background: var(--bg); z-index: 200;
-    display: flex; align-items: center; justify-content: center;
-    font-family: var(--mono);
-  }
-  .boot .lines { max-width: 540px; width: 100%; padding: 0 2rem; }
-  .boot .line { color: var(--phos); font-size: .8rem; margin: .3rem 0;
-                opacity: 0; overflow: hidden; white-space: nowrap; }
-  .boot .line.ok::after { content: ' [OK]'; color: var(--cyan); }
-  .boot.hide { opacity: 0; pointer-events: none; transition: opacity .3s; }
-
-  @media (max-width: 820px) {
-    .hud { grid-template-columns: 1fr; }
+  @media (max-width: 780px) {
+    .kv-grid { grid-template-columns: repeat(2, 1fr); }
     .compare { grid-template-columns: 1fr; }
-    .livestats { grid-template-columns: 1fr 1fr; }
   }
 </style>
 </head>
 <body>
 
-<!-- boot overlay plays once on load -->
-<div class="boot" id="boot">
-  <div class="lines" id="bootLines"></div>
-</div>
-
-<!-- top status bar -->
-<div class="topbar">
-  <span><span class="status-dot"></span><span class="brand">MINILLM.CPP</span></span>
-  <span class="sep">│</span>
-  <span>ARM NEON</span>
-  <span class="sep">│</span>
-  <span>SMOLLM2-135M</span>
-  <span class="sep">│</span>
-  <span>LOOPBACK :8080</span>
-  <span class="clock" id="clock">--:--:--</span>
-</div>
+<nav>
+  <span class="brand">
+    <span class="dot"></span>
+    <span>minillm<span class="suffix">.cpp</span></span>
+  </span>
+  <span class="meta">
+    SmolLM2-135M<span class="sep">·</span>ARM NEON<span class="sep">·</span>:8080
+  </span>
+  <span class="spacer"></span>
+  <a href="https://github.com/georgebon5/minillm-cpp" target="_blank">source</a>
+</nav>
 
 <main>
-  <pre class="banner" id="banner">
-   __  __ ___ _  _ ___ _    _    __  __    ___ ___ ___
-  |  \/  |_ _| \| |_ _| |  | |  |  \/  |  / __| _ \ _ \
-  | |\/| || || .` || || |__| |__| |\/| | | (__|  _/  _/
-  |_|  |_|___|_|\_|___|____|____|_|  |_|  \___|_| |_|   v1.0.0</pre>
-  <div class="subbanner">
-    <span class="k">●</span> CPU-ONLY · PER-CHANNEL QUANTIZATION · ZERO EXTERNAL DEPS · 97 TESTS PASS
+  <div class="hero">
+    <h1>Inference playground</h1>
+    <p>Run the CPU-only inference engine and compare generation quality across quantization levels.</p>
   </div>
 
-  <!-- HUD: three info panels side-by-side -->
-  <div class="hud">
-    <div class="panel" data-title="arch">
+  <!-- model section -->
+  <div class="section-label">Model <div class="line"></div></div>
+  <div class="card">
+    <div class="kv-grid">
       <div class="kv"><span class="k">vocab</span><span class="v" id="iVocab">—</span></div>
       <div class="kv"><span class="k">layers</span><span class="v" id="iLayers">—</span></div>
       <div class="kv"><span class="k">hidden</span><span class="v" id="iHidden">—</span></div>
@@ -372,58 +351,240 @@ static const char* kIndexHtml = R"HTML(<!doctype html>
       <div class="kv"><span class="k">kv-heads</span><span class="v" id="iKvHeads">—</span></div>
       <div class="kv"><span class="k">head-dim</span><span class="v" id="iHeadDim">—</span></div>
     </div>
-    <div class="panel" data-title="memory">
-      <div class="bar-row"><span class="lbl">fp32</span>
-        <div class="bar-outer"><div class="bar-inner" id="barFp32" style="width:100%"></div></div>
-        <span class="size" id="sizeFp32">—</span><span class="mult">1×</span></div>
-      <div class="bar-row"><span class="lbl">int8</span>
-        <div class="bar-outer"><div class="bar-inner int8" id="barInt8" style="width:0"></div></div>
-        <span class="size" id="sizeInt8">—</span><span class="mult" id="multInt8">—</span></div>
-      <div class="bar-row"><span class="lbl">int4</span>
-        <div class="bar-outer"><div class="bar-inner int4" id="barInt4" style="width:0"></div></div>
-        <span class="size" id="sizeInt4">—</span><span class="mult" id="multInt4">—</span></div>
+  </div>
+
+  <!-- memory section -->
+  <div class="section-label">Memory footprint <div class="line"></div></div>
+  <div class="card pad-tight">
+    <div class="mem-row">
+      <span class="label">fp32</span>
+      <div class="mem-bar"><div class="fill" id="barFp32" style="width:100%"></div></div>
+      <span class="size" id="sizeFp32">—</span>
+      <span class="mult">1×</span>
     </div>
-    <div class="panel" data-title="runtime">
-      <div class="kv"><span class="k">status</span><span class="v hi">READY</span></div>
-      <div class="kv"><span class="k">quant</span><span class="v">per-channel symm.</span></div>
-      <div class="kv"><span class="k">simd</span><span class="v">NEON ×4 FMA</span></div>
-      <div class="kv"><span class="k">kv-cache</span><span class="v">per-layer append</span></div>
-      <div class="kv"><span class="k">sampling</span><span class="v">greedy argmax</span></div>
-      <div class="kv"><span class="k">stream</span><span class="v">SSE token</span></div>
+    <div class="mem-row">
+      <span class="label">int8</span>
+      <div class="mem-bar"><div class="fill int8" id="barInt8" style="width:0"></div></div>
+      <span class="size" id="sizeInt8">—</span>
+      <span class="mult" id="multInt8">—</span>
+    </div>
+    <div class="mem-row">
+      <span class="label">int4</span>
+      <div class="mem-bar"><div class="fill int4" id="barInt4" style="width:0"></div></div>
+      <span class="size" id="sizeInt4">—</span>
+      <span class="mult" id="multInt4">—</span>
     </div>
   </div>
 
-  <div class="input-row">
-    <textarea id="prompt" placeholder="enter prompt and press ⌘⏎">The capital of France is</textarea>
-  </div>
+  <!-- prompt section -->
+  <div class="section-label">Prompt <div class="line"></div></div>
+  <textarea id="prompt" placeholder="enter prompt and press ⌘⏎">The capital of France is</textarea>
 
   <div class="controls">
-    <span class="pill-label">tokens</span>
-    <input id="maxTokens" type="number" value="48" min="1" max="256">
-    <span class="pill-label" style="margin-left:.5rem">quant</span>
-    <select id="quant">
-      <option value="fp32" selected>fp32</option>
-      <option value="int8">int8</option>
-      <option value="int4">int4</option>
-    </select>
-    <span class="hint" style="margin-left:1rem"><kbd>⌘⏎</kbd> run · <kbd>esc</kbd> stop</span>
-    <div class="spacer"></div>
-    <button class="btn secondary" id="compareBtn">▣ COMPARE</button>
-    <button class="btn primary"   id="goBtn">▶ EXECUTE</button>
+    <div class="field"><label>tokens</label>
+      <input id="maxTokens" type="number" value="48" min="1" max="256">
+    </div>
+    <div class="field"><label>quant</label>
+      <select id="quant">
+        <option value="fp32" selected>fp32</option>
+        <option value="int8">int8</option>
+        <option value="int4">int4</option>
+      </select>
+    </div>
+    <span class="hint"><kbd>⌘⏎</kbd> run · <kbd>esc</kbd> stop</span>
+    <button class="btn" id="compareBtn">Compare all</button>
+    <button class="btn primary" id="goBtn">Generate</button>
   </div>
 
-  <div class="output" id="out"><span class="prompt">// awaiting input</span></div>
+  <!-- output section -->
+  <div class="section-label">Output <div class="line"></div></div>
+  <div class="output" id="out"><span class="placeholder">Output will appear here.</span></div>
 
-  <div class="livestats">
-    <span><span class="stat-k">TOK/S</span></span>
-    <span class="spark" id="spark"></span>
-    <span><span class="stat-k">GEN </span><span class="stat-v" id="statN">0</span></span>
-    <span><span class="stat-k">ELAPSED </span><span class="stat-v cyan" id="statMs">0ms</span></span>
-    <span><span class="stat-k">QUANT </span><span class="stat-v amber" id="statQ">—</span></span>
+  <div class="status-bar">
+    <div class="status-item"><span class="k">tokens</span><span class="v" id="statN">0</span></div>
+    <div class="status-item"><span class="k">elapsed</span><span class="v" id="statMs">0ms</span></div>
+    <div class="status-item"><span class="k">throughput</span><span class="v" id="statTps">0 tok/s</span></div>
+    <div class="status-item"><span class="k">quant</span><span class="v" id="statQ">—</span></div>
+    <div class="spark" id="spark"></div>
   </div>
 
   <div class="compare" id="compare" style="display:none"></div>
 </main>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const promptEl = $('prompt');
+const outEl    = $('out');
+const compareEl = $('compare');
+const goBtn   = $('goBtn');
+const compareBtn = $('compareBtn');
+const spark   = $('spark');
+
+let activeStream = null;
+let tpsHistory = [];
+
+// ── model info ──────────────────────────────────────────────────────────────
+async function loadInfo() {
+  try {
+    const r = await fetch('/info');
+    const d = await r.json();
+    $('iVocab').textContent   = d.vocab.toLocaleString();
+    $('iLayers').textContent  = d.layers;
+    $('iHidden').textContent  = d.hidden;
+    $('iHeads').textContent   = d.n_heads;
+    $('iKvHeads').textContent = d.n_kv_heads + ' (GQA)';
+    $('iHeadDim').textContent = d.head_dim;
+    $('sizeFp32').textContent = fmtMB(d.mem_fp32_bytes);
+    $('sizeInt8').textContent = fmtMB(d.mem_int8_bytes);
+    $('sizeInt4').textContent = fmtMB(d.mem_int4_bytes);
+    $('barInt8').style.width = (100 * d.mem_int8_bytes / d.mem_fp32_bytes) + '%';
+    $('barInt4').style.width = (100 * d.mem_int4_bytes / d.mem_fp32_bytes) + '%';
+    $('multInt8').textContent = (d.mem_fp32_bytes/d.mem_int8_bytes).toFixed(1) + '×';
+    $('multInt4').textContent = (d.mem_fp32_bytes/d.mem_int4_bytes).toFixed(1) + '×';
+  } catch (e) { console.warn('info failed', e); }
+}
+function fmtMB(b) { return (b/1024/1024).toFixed(1) + ' MB'; }
+
+// ── sparkline ───────────────────────────────────────────────────────────────
+function pushSpark(tps) {
+  tpsHistory.push(tps);
+  if (tpsHistory.length > 32) tpsHistory.shift();
+  const max = Math.max(1, ...tpsHistory);
+  spark.innerHTML = '';
+  for (const v of tpsHistory) {
+    const s = document.createElement('span');
+    s.style.height = Math.max(2, 16 * v / max) + 'px';
+    spark.appendChild(s);
+  }
+}
+
+// ── streaming ───────────────────────────────────────────────────────────────
+function streamGenerate() {
+  stopStream();
+  compareEl.style.display = 'none';
+
+  const prompt     = promptEl.value;
+  const max_tokens = parseInt($('maxTokens').value, 10);
+  const quant      = $('quant').value;
+
+  if (!prompt.trim()) return;
+
+  goBtn.disabled = true;
+  tpsHistory = []; spark.innerHTML = '';
+  $('statN').textContent  = '0';
+  $('statMs').textContent = '0ms';
+  $('statTps').textContent = '0 tok/s';
+  $('statQ').textContent  = quant;
+
+  outEl.innerHTML = '<span class="prompt-txt"></span><span class="gen"></span><span class="caret"></span>';
+  outEl.querySelector('.prompt-txt').textContent = prompt;
+  const genSpan = outEl.querySelector('.gen');
+
+  const url = `/stream?prompt=${encodeURIComponent(prompt)}&max_tokens=${max_tokens}&quant=${quant}`;
+  const es  = new EventSource(url);
+  activeStream = es;
+
+  const t0 = performance.now();
+
+  es.addEventListener('token', (e) => {
+    const d = JSON.parse(e.data);
+    const flash = document.createElement('span');
+    flash.className = 'tok-flash';
+    flash.textContent = d.delta;
+    genSpan.appendChild(flash);
+    setTimeout(() => {
+      const t = flash.textContent;
+      flash.replaceWith(document.createTextNode(t));
+    }, 500);
+
+    const elapsed = (performance.now() - t0) / 1000;
+    const tps = d.n / elapsed;
+    pushSpark(tps);
+    $('statN').textContent  = d.n;
+    $('statMs').textContent = Math.round(elapsed * 1000) + 'ms';
+    $('statTps').textContent = tps.toFixed(0) + ' tok/s';
+  });
+
+  es.addEventListener('done', (e) => {
+    const d = JSON.parse(e.data);
+    outEl.querySelector('.caret')?.remove();
+    $('statN').textContent  = d.n_tokens;
+    $('statMs').textContent = d.ms + 'ms';
+    $('statTps').textContent = d.tok_per_sec + ' tok/s';
+    es.close(); activeStream = null; goBtn.disabled = false;
+  });
+
+  es.onerror = () => {
+    outEl.querySelector('.caret')?.remove();
+    $('statMs').textContent = 'connection lost';
+    es.close(); activeStream = null; goBtn.disabled = false;
+  };
+}
+
+function stopStream() {
+  if (activeStream) { activeStream.close(); activeStream = null; }
+  outEl.querySelector('.caret')?.remove();
+  goBtn.disabled = false;
+}
+
+// ── compare ─────────────────────────────────────────────────────────────────
+async function compareAll() {
+  stopStream();
+  const prompt     = promptEl.value;
+  const max_tokens = parseInt($('maxTokens').value, 10);
+  if (!prompt.trim()) return;
+
+  compareBtn.disabled = true; goBtn.disabled = true;
+  outEl.innerHTML = '<span class="placeholder">Running fp32, int8, and int4 in sequence…</span>';
+  compareEl.innerHTML = '';
+  compareEl.style.display = 'grid';
+  $('statQ').textContent = 'all';
+
+  try {
+    const r = await fetch('/compare', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ prompt, max_tokens }),
+    });
+    const data = await r.json();
+    compareEl.innerHTML = '';
+    for (const q of ['fp32', 'int8', 'int4']) {
+      const d = data[q];
+      const col = document.createElement('div');
+      col.className = 'col ' + q;
+      col.innerHTML = `
+        <div class="col-head">
+          <span class="tag">${q}</span>
+          <span class="perf"><span class="num">${d.tok_per_sec}</span> tok/s</span>
+        </div>
+        <div class="text"><span class="prompt-txt">${escapeHtml(prompt)}</span>${escapeHtml(d.generated)}</div>
+        <div class="perf"><span class="num">${d.n_tokens}</span> tokens · <span class="num">${d.ms}</span>ms</div>
+      `;
+      compareEl.appendChild(col);
+    }
+    outEl.innerHTML = '<span class="placeholder">Comparison below — same prompt across three quantization levels.</span>';
+  } catch (e) {
+    outEl.innerHTML = `<span class="placeholder" style="color: var(--red)">Error: ${escapeHtml(e.message)}</span>`;
+  } finally {
+    compareBtn.disabled = false; goBtn.disabled = false;
+  }
+}
+
+function escapeHtml(s) {
+  return (s || '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+goBtn.addEventListener('click', streamGenerate);
+compareBtn.addEventListener('click', compareAll);
+promptEl.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) streamGenerate();
+});
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') stopStream();
+});
+
+loadInfo();
+</script>
+</body>
 
 <script>
 const $ = (id) => document.getElementById(id);
