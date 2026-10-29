@@ -35,195 +35,392 @@ static const char* kIndexHtml = R"HTML(<!doctype html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>minillm.cpp</title>
+<title>MINILLM.CPP · ONLINE</title>
 <style>
   :root {
     color-scheme: dark;
-    --bg: #0a0a0a;
-    --panel: #111;
-    --border: #1f1f1f;
-    --fg: #e8e8e8;
-    --muted: #6b7280;
-    --accent: #10b981;
-    --mono: ui-monospace, "SF Mono", Menlo, monospace;
+    --bg: #050807;
+    --bg2: #0a0f0d;
+    --panel: #0d1512;
+    --border: #163026;
+    --border-hot: #1f5944;
+    --fg: #c7f5db;
+    --dim: #4a7a62;
+    --mute: #2d4a3d;
+    --phos: #00ff88;
+    --cyan: #22e8ff;
+    --amber: #ffb84d;
+    --red: #ff3344;
+    --mono: "JetBrains Mono", "SF Mono", ui-monospace, Menlo, monospace;
   }
+
+  @keyframes scan { 0% { transform: translateY(-100%); } 100% { transform: translateY(100vh); } }
+  @keyframes flicker { 0%, 100% { opacity: 1; } 50% { opacity: .97; } }
+  @keyframes pulse-dot { 0%, 100% { opacity: 1; } 50% { opacity: .3; } }
+  @keyframes caret-blink { 0%, 49% { opacity: 1; } 50%, 100% { opacity: 0; } }
+  @keyframes token-flash {
+    0% { background: rgba(0, 255, 136, 0.25); color: var(--phos); }
+    100% { background: transparent; color: var(--fg); }
+  }
+  @keyframes boot-type { from { width: 0; } to { width: 100%; } }
+
   * { box-sizing: border-box; }
-  html, body { margin: 0; padding: 0; background: var(--bg); color: var(--fg); }
+  html, body { margin: 0; padding: 0; background: var(--bg); color: var(--fg); min-height: 100%; }
   body {
-    font-family: -apple-system, BlinkMacSystemFont, "Inter", system-ui, sans-serif;
-    font-size: 14px; line-height: 1.5;
-    min-height: 100vh;
-    display: flex; justify-content: center;
+    font-family: var(--mono);
+    font-size: 13px; line-height: 1.55;
+    animation: flicker 7s infinite;
+    position: relative; overflow-x: hidden;
+    background:
+      radial-gradient(ellipse at top, #0a1510 0%, var(--bg) 60%),
+      repeating-linear-gradient(0deg,
+        rgba(0, 255, 136, 0.028) 0px,
+        rgba(0, 255, 136, 0.028) 1px,
+        transparent 1px,
+        transparent 3px);
   }
-  main { width: 100%; max-width: 820px; padding: 3rem 2rem 4rem; }
-
-  header { display: flex; justify-content: space-between; align-items: baseline;
-           margin-bottom: 2rem; }
-  h1 { margin: 0; font-size: 1.1rem; font-weight: 500; letter-spacing: -.01em; }
-  h1 .mono { font-family: var(--mono); color: var(--accent); }
-  .tagline { color: var(--muted); font-size: .8rem; }
-
-  .info-toggle {
-    background: none; border: none; color: var(--muted); cursor: pointer;
-    font: inherit; padding: 0; letter-spacing: .02em;
+  /* moving scanline */
+  body::before {
+    content: ''; position: fixed; inset: 0; pointer-events: none; z-index: 100;
+    background: linear-gradient(180deg, transparent 0%, rgba(0, 255, 136, 0.08) 50%, transparent 100%);
+    height: 100px; animation: scan 6s linear infinite;
   }
-  .info-toggle:hover { color: var(--fg); }
-  .info-panel {
-    display: none; margin-bottom: 1.5rem; padding: 1rem 1.25rem;
-    background: var(--panel); border: 1px solid var(--border); border-radius: 6px;
-    font-family: var(--mono); font-size: .78rem; line-height: 1.7;
+  /* vignette */
+  body::after {
+    content: ''; position: fixed; inset: 0; pointer-events: none; z-index: 99;
+    box-shadow: inset 0 0 180px rgba(0, 0, 0, 0.9);
   }
-  .info-panel.open { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 1.25rem; }
-  .info-panel .label { color: var(--muted); }
-  .info-panel .val { color: var(--fg); }
-  .info-panel h3 { margin: 0 0 .35rem 0; font-size: .72rem; font-weight: 500;
-                   color: var(--muted); text-transform: uppercase; letter-spacing: .08em; }
 
+  /* ── top status bar ──────────────────────────────────────────────────── */
+  .topbar {
+    position: sticky; top: 0; z-index: 50;
+    display: flex; align-items: center; gap: 1.5rem;
+    padding: .5rem 1.25rem;
+    background: #000;
+    border-bottom: 1px solid var(--border-hot);
+    font-size: .72rem; letter-spacing: .12em; text-transform: uppercase;
+    color: var(--dim);
+  }
+  .topbar .brand {
+    color: var(--phos); font-weight: 700; letter-spacing: .18em;
+    text-shadow: 0 0 8px rgba(0, 255, 136, 0.6);
+  }
+  .topbar .sep { color: var(--mute); }
+  .topbar .status-dot {
+    display: inline-block; width: 7px; height: 7px; border-radius: 50%;
+    background: var(--phos); margin-right: .35rem;
+    box-shadow: 0 0 6px var(--phos);
+    animation: pulse-dot 2s infinite;
+    vertical-align: middle;
+  }
+  .topbar .clock { margin-left: auto; color: var(--cyan); letter-spacing: .1em; }
+
+  main {
+    max-width: 1040px; margin: 0 auto;
+    padding: 1.5rem 1.25rem 4rem;
+  }
+
+  /* ── banner ──────────────────────────────────────────────────────────── */
+  .banner {
+    font-size: .68rem; line-height: 1.1; color: var(--phos);
+    text-shadow: 0 0 10px rgba(0, 255, 136, 0.5);
+    white-space: pre; margin: .5rem 0 .25rem;
+    user-select: none;
+  }
+  .subbanner {
+    color: var(--dim); font-size: .72rem; letter-spacing: .18em;
+    text-transform: uppercase; margin-bottom: 1.5rem;
+    padding-bottom: .5rem; border-bottom: 1px dashed var(--mute);
+  }
+  .subbanner .k { color: var(--cyan); }
+
+  /* ── HUD grid: info + memory + runtime side-by-side ──────────────────── */
+  .hud {
+    display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 1rem;
+    margin-bottom: 1.5rem;
+  }
+  .panel {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    position: relative;
+    padding: .75rem .9rem;
+  }
+  .panel::before {
+    content: attr(data-title);
+    position: absolute; top: -.55rem; left: .5rem;
+    background: var(--bg); padding: 0 .5rem;
+    color: var(--dim); font-size: .64rem; letter-spacing: .2em; text-transform: uppercase;
+  }
+  .panel::after {
+    content: '┐'; position: absolute; top: -.4rem; right: -1px;
+    color: var(--border-hot); font-size: 1rem; line-height: 1;
+  }
+  .kv { display: flex; justify-content: space-between; align-items: baseline; gap: .5rem; }
+  .kv .k { color: var(--dim); font-size: .72rem; letter-spacing: .05em; }
+  .kv .v { color: var(--fg); font-size: .82rem; font-variant-numeric: tabular-nums; }
+  .kv .v.hi { color: var(--phos); text-shadow: 0 0 6px rgba(0, 255, 136, 0.4); }
+
+  /* memory bars */
+  .bar-row { display: flex; align-items: center; gap: .5rem; margin: .25rem 0; }
+  .bar-row .lbl { color: var(--dim); font-size: .7rem; min-width: 2.5rem; }
+  .bar-outer {
+    flex: 1; height: 10px; background: rgba(0, 255, 136, 0.06);
+    border: 1px solid var(--mute); position: relative;
+  }
+  .bar-inner {
+    height: 100%; background: var(--phos);
+    box-shadow: 0 0 6px rgba(0, 255, 136, 0.5);
+    transition: width .4s ease;
+  }
+  .bar-inner.int8 { background: var(--cyan); box-shadow: 0 0 6px rgba(34, 232, 255, 0.5); }
+  .bar-inner.int4 { background: var(--amber); box-shadow: 0 0 6px rgba(255, 184, 77, 0.5); }
+  .bar-row .size { color: var(--fg); font-size: .72rem; min-width: 5rem; text-align: right; font-variant-numeric: tabular-nums; }
+  .bar-row .mult { color: var(--dim); font-size: .68rem; min-width: 2.5rem; text-align: right; }
+
+  /* ── input section ───────────────────────────────────────────────────── */
+  .input-row { position: relative; margin-bottom: 1rem; }
+  .input-row::before {
+    content: '>_'; position: absolute; left: .55rem; top: .55rem;
+    color: var(--phos); font-weight: 700; letter-spacing: 0;
+    text-shadow: 0 0 6px rgba(0, 255, 136, 0.6); z-index: 1;
+  }
   textarea {
     width: 100%; min-height: 72px; resize: vertical;
-    background: var(--panel); border: 1px solid var(--border); border-radius: 6px;
-    color: var(--fg); padding: .75rem .9rem;
+    background: var(--panel); border: 1px solid var(--border);
+    color: var(--fg); padding: .55rem .9rem .55rem 2.3rem;
     font-family: var(--mono); font-size: .9rem;
+    caret-color: var(--phos);
   }
-  textarea:focus { outline: none; border-color: #333; }
+  textarea::placeholder { color: var(--mute); }
+  textarea:focus { outline: none; border-color: var(--border-hot);
+                   box-shadow: 0 0 0 1px var(--border-hot), 0 0 20px rgba(0, 255, 136, 0.1); }
 
   .controls {
-    display: flex; gap: .75rem; align-items: center; flex-wrap: wrap;
-    margin: 1rem 0 .5rem;
+    display: flex; gap: .5rem; align-items: center; flex-wrap: wrap;
+    margin-bottom: 1rem;
+    padding: .5rem .75rem; background: var(--panel); border: 1px solid var(--border);
   }
-  .control { display: flex; align-items: center; gap: .4rem; color: var(--muted);
-             font-size: .82rem; }
+  .pill-label { color: var(--dim); font-size: .68rem; letter-spacing: .15em;
+                text-transform: uppercase; margin-right: .25rem; }
   input[type=number], select {
-    background: var(--panel); border: 1px solid var(--border); border-radius: 4px;
-    color: var(--fg); padding: .25rem .5rem; font: inherit; font-size: .82rem;
+    background: #000; border: 1px solid var(--mute); color: var(--phos);
+    padding: .25rem .5rem; font: inherit; font-size: .78rem;
+    font-family: var(--mono); font-variant-numeric: tabular-nums;
   }
   input[type=number] { width: 60px; }
-  input:focus, select:focus { outline: none; border-color: #333; }
+  input:focus, select:focus { outline: none; border-color: var(--phos); }
 
-  button {
-    background: var(--fg); border: none; color: var(--bg);
-    font: inherit; font-weight: 500; font-size: .85rem;
-    padding: .45rem 1rem; border-radius: 4px; cursor: pointer;
+  .btn {
+    background: transparent; border: 1px solid var(--border-hot);
+    color: var(--phos); font: inherit; font-size: .75rem; font-weight: 600;
+    padding: .35rem .9rem; letter-spacing: .15em; text-transform: uppercase;
+    cursor: pointer; font-family: var(--mono);
+    transition: all .15s;
   }
-  button:disabled { opacity: .4; cursor: not-allowed; }
-  button:hover:not(:disabled) { background: #fff; }
-  button.ghost { background: transparent; color: var(--fg); border: 1px solid var(--border); }
-  button.ghost:hover:not(:disabled) { background: var(--panel); }
+  .btn:hover:not(:disabled) {
+    background: rgba(0, 255, 136, 0.1);
+    box-shadow: 0 0 12px rgba(0, 255, 136, 0.3);
+    color: #fff;
+  }
+  .btn.primary {
+    background: var(--phos); color: #000; border-color: var(--phos);
+    box-shadow: 0 0 10px rgba(0, 255, 136, 0.4);
+  }
+  .btn.primary:hover:not(:disabled) { background: #4fffaa; box-shadow: 0 0 18px rgba(0, 255, 136, 0.7); }
+  .btn:disabled { opacity: .3; cursor: not-allowed; }
+  .btn.secondary { color: var(--cyan); border-color: var(--cyan); }
+  .btn.secondary:hover:not(:disabled) { background: rgba(34, 232, 255, 0.12); color: #fff; box-shadow: 0 0 12px rgba(34, 232, 255, 0.4); }
   .spacer { flex: 1; }
-  kbd {
-    font-family: var(--mono); font-size: .72rem; background: var(--panel);
-    padding: 1px 6px; border: 1px solid var(--border); border-radius: 3px;
-    color: var(--muted);
+  .hint { color: var(--mute); font-size: .68rem; letter-spacing: .1em; }
+  .hint kbd {
+    background: #000; border: 1px solid var(--mute); color: var(--cyan);
+    padding: 1px 6px; font-size: .66rem; font-family: var(--mono);
   }
 
+  /* ── output ──────────────────────────────────────────────────────────── */
   .output {
-    margin-top: 1rem; padding: 1rem 1.1rem;
-    background: var(--panel); border: 1px solid var(--border); border-radius: 6px;
+    position: relative;
+    background: var(--panel); border: 1px solid var(--border);
+    padding: 1rem 1.1rem;
     min-height: 180px; white-space: pre-wrap; word-wrap: break-word;
-    font-family: var(--mono); font-size: .88rem; line-height: 1.6;
+    font-size: .88rem; line-height: 1.7;
   }
-  .output .prompt { color: var(--muted); }
-  .output .gen { color: var(--fg); }
-  .caret { display: inline-block; width: 7px; height: 1em; background: var(--accent);
-           vertical-align: text-bottom; animation: blink 1s steps(2) infinite; }
-  @keyframes blink { 50% { opacity: 0; } }
-
-  .status {
-    margin-top: .75rem; color: var(--muted); font-size: .78rem;
-    font-family: var(--mono); font-variant-numeric: tabular-nums;
-    display: flex; gap: 1.5rem; flex-wrap: wrap;
+  .output::before {
+    content: 'OUTPUT'; position: absolute; top: -.55rem; left: .5rem;
+    background: var(--bg); padding: 0 .5rem;
+    color: var(--dim); font-size: .64rem; letter-spacing: .2em;
   }
-  .status .val { color: var(--fg); }
-  .status .err { color: #ef4444; }
+  .output .prompt { color: var(--dim); }
+  .output .gen { color: var(--fg); text-shadow: 0 0 4px rgba(199, 245, 219, 0.15); }
+  .tok-flash { animation: token-flash .5s ease-out; }
+  .caret {
+    display: inline-block; width: 8px; height: 1em; background: var(--phos);
+    vertical-align: text-bottom; animation: caret-blink .8s infinite;
+    box-shadow: 0 0 6px var(--phos);
+  }
 
-  /* compare mode */
+  /* ── live stats hud ──────────────────────────────────────────────────── */
+  .livestats {
+    margin-top: .75rem;
+    display: grid; grid-template-columns: auto 1fr auto auto auto; gap: 1rem;
+    align-items: center;
+    padding: .5rem .9rem;
+    background: #000; border: 1px solid var(--border);
+    font-size: .72rem; letter-spacing: .08em;
+  }
+  .livestats .stat-k { color: var(--dim); text-transform: uppercase; }
+  .livestats .stat-v {
+    color: var(--phos); font-variant-numeric: tabular-nums;
+    text-shadow: 0 0 4px rgba(0, 255, 136, 0.4);
+  }
+  .livestats .stat-v.cyan { color: var(--cyan); text-shadow: 0 0 4px rgba(34, 232, 255, 0.4); }
+  .livestats .stat-v.amber { color: var(--amber); text-shadow: 0 0 4px rgba(255, 184, 77, 0.4); }
+  .livestats .err { color: var(--red); }
+  .spark {
+    display: flex; align-items: flex-end; height: 20px; gap: 1px;
+  }
+  .spark span {
+    display: inline-block; width: 3px; background: var(--phos);
+    box-shadow: 0 0 3px var(--phos);
+  }
+
+  /* ── compare mode ────────────────────────────────────────────────────── */
   .compare { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 1rem; margin-top: 1rem; }
   .compare .col {
-    background: var(--panel); border: 1px solid var(--border); border-radius: 6px;
-    padding: .85rem; display: flex; flex-direction: column; gap: .5rem;
+    background: var(--panel); border: 1px solid var(--border);
+    padding: .9rem; display: flex; flex-direction: column; gap: .55rem;
+    position: relative;
   }
-  .compare h4 { margin: 0; font-size: .72rem; font-weight: 500;
-                color: var(--muted); text-transform: uppercase; letter-spacing: .08em; }
-  .compare h4 .pill {
-    background: var(--border); color: var(--fg); padding: 2px 8px;
-    border-radius: 3px; font-family: var(--mono); margin-left: .35rem;
+  .compare .col::before {
+    content: attr(data-q); position: absolute; top: -.55rem; left: .5rem;
+    background: var(--bg); padding: 0 .5rem;
+    font-size: .68rem; letter-spacing: .18em; text-transform: uppercase;
   }
+  .compare .col.fp32::before { color: var(--phos); }
+  .compare .col.int8::before { color: var(--cyan); }
+  .compare .col.int4::before { color: var(--amber); }
+  .compare .col.fp32 { border-color: var(--border-hot); }
+  .compare .col.int8 { border-color: #1f4958; }
+  .compare .col.int4 { border-color: #5c4420; }
+  .compare .perf {
+    display: flex; justify-content: space-between; font-size: .68rem;
+    color: var(--dim); letter-spacing: .1em;
+    padding-bottom: .5rem; border-bottom: 1px dashed var(--mute);
+  }
+  .compare .perf .v { color: var(--fg); font-variant-numeric: tabular-nums; }
   .compare .text {
-    font-family: var(--mono); font-size: .78rem; line-height: 1.55;
-    white-space: pre-wrap; word-wrap: break-word;
-    min-height: 120px; max-height: 320px; overflow-y: auto;
-    color: var(--fg);
+    font-size: .78rem; line-height: 1.65; white-space: pre-wrap; word-wrap: break-word;
+    min-height: 120px; max-height: 300px; overflow-y: auto; color: var(--fg);
   }
-  .compare .text .prompt { color: var(--muted); }
-  .compare .foot {
-    font-family: var(--mono); font-size: .72rem; color: var(--muted);
-    display: flex; justify-content: space-between;
-    border-top: 1px solid var(--border); padding-top: .5rem;
-  }
-  .compare .foot .val { color: var(--fg); }
+  .compare .text .prompt { color: var(--dim); }
 
-  @media (max-width: 640px) {
-    main { padding: 1.5rem 1rem 3rem; }
-    .info-panel.open { grid-template-columns: 1fr; }
+  /* ── boot overlay ────────────────────────────────────────────────────── */
+  .boot {
+    position: fixed; inset: 0; background: var(--bg); z-index: 200;
+    display: flex; align-items: center; justify-content: center;
+    font-family: var(--mono);
+  }
+  .boot .lines { max-width: 540px; width: 100%; padding: 0 2rem; }
+  .boot .line { color: var(--phos); font-size: .8rem; margin: .3rem 0;
+                opacity: 0; overflow: hidden; white-space: nowrap; }
+  .boot .line.ok::after { content: ' [OK]'; color: var(--cyan); }
+  .boot.hide { opacity: 0; pointer-events: none; transition: opacity .3s; }
+
+  @media (max-width: 820px) {
+    .hud { grid-template-columns: 1fr; }
     .compare { grid-template-columns: 1fr; }
+    .livestats { grid-template-columns: 1fr 1fr; }
   }
 </style>
 </head>
 <body>
-<main>
-  <header>
-    <div>
-      <h1>minillm<span class="mono">.cpp</span></h1>
-      <div class="tagline">C++20 · SmolLM2-135M · ARM NEON · quantization</div>
-    </div>
-    <button class="info-toggle" id="infoToggle">model info ▾</button>
-  </header>
 
-  <div class="info-panel" id="infoPanel">
-    <div>
-      <h3>Architecture</h3>
-      <div><span class="label">vocab   </span><span class="val" id="iVocab">—</span></div>
-      <div><span class="label">layers  </span><span class="val" id="iLayers">—</span></div>
-      <div><span class="label">hidden  </span><span class="val" id="iHidden">—</span></div>
-      <div><span class="label">heads   </span><span class="val" id="iHeads">—</span></div>
-      <div><span class="label">kv-heads</span><span class="val" id="iKvHeads">—</span></div>
-      <div><span class="label">head-dim</span><span class="val" id="iHeadDim">—</span></div>
+<!-- boot overlay plays once on load -->
+<div class="boot" id="boot">
+  <div class="lines" id="bootLines"></div>
+</div>
+
+<!-- top status bar -->
+<div class="topbar">
+  <span><span class="status-dot"></span><span class="brand">MINILLM.CPP</span></span>
+  <span class="sep">│</span>
+  <span>ARM NEON</span>
+  <span class="sep">│</span>
+  <span>SMOLLM2-135M</span>
+  <span class="sep">│</span>
+  <span>LOOPBACK :8080</span>
+  <span class="clock" id="clock">--:--:--</span>
+</div>
+
+<main>
+  <pre class="banner" id="banner">
+   __  __ ___ _  _ ___ _    _    __  __    ___ ___ ___
+  |  \/  |_ _| \| |_ _| |  | |  |  \/  |  / __| _ \ _ \
+  | |\/| || || .` || || |__| |__| |\/| | | (__|  _/  _/
+  |_|  |_|___|_|\_|___|____|____|_|  |_|  \___|_| |_|   v1.0.0</pre>
+  <div class="subbanner">
+    <span class="k">●</span> CPU-ONLY · PER-CHANNEL QUANTIZATION · ZERO EXTERNAL DEPS · 97 TESTS PASS
+  </div>
+
+  <!-- HUD: three info panels side-by-side -->
+  <div class="hud">
+    <div class="panel" data-title="arch">
+      <div class="kv"><span class="k">vocab</span><span class="v" id="iVocab">—</span></div>
+      <div class="kv"><span class="k">layers</span><span class="v" id="iLayers">—</span></div>
+      <div class="kv"><span class="k">hidden</span><span class="v" id="iHidden">—</span></div>
+      <div class="kv"><span class="k">heads</span><span class="v" id="iHeads">—</span></div>
+      <div class="kv"><span class="k">kv-heads</span><span class="v" id="iKvHeads">—</span></div>
+      <div class="kv"><span class="k">head-dim</span><span class="v" id="iHeadDim">—</span></div>
     </div>
-    <div>
-      <h3>Weights memory</h3>
-      <div><span class="label">fp32    </span><span class="val" id="mFp32">—</span></div>
-      <div><span class="label">int8    </span><span class="val" id="mInt8">—</span></div>
-      <div><span class="label">int4    </span><span class="val" id="mInt4">—</span></div>
+    <div class="panel" data-title="memory">
+      <div class="bar-row"><span class="lbl">fp32</span>
+        <div class="bar-outer"><div class="bar-inner" id="barFp32" style="width:100%"></div></div>
+        <span class="size" id="sizeFp32">—</span><span class="mult">1×</span></div>
+      <div class="bar-row"><span class="lbl">int8</span>
+        <div class="bar-outer"><div class="bar-inner int8" id="barInt8" style="width:0"></div></div>
+        <span class="size" id="sizeInt8">—</span><span class="mult" id="multInt8">—</span></div>
+      <div class="bar-row"><span class="lbl">int4</span>
+        <div class="bar-outer"><div class="bar-inner int4" id="barInt4" style="width:0"></div></div>
+        <span class="size" id="sizeInt4">—</span><span class="mult" id="multInt4">—</span></div>
     </div>
-    <div>
-      <h3>Runtime</h3>
-      <div><span class="label">status  </span><span class="val" style="color: var(--accent)">ready</span></div>
-      <div><span class="label">quant   </span><span class="val">per-channel symmetric</span></div>
-      <div><span class="label">simd    </span><span class="val">ARM NEON (4× FMA acc)</span></div>
+    <div class="panel" data-title="runtime">
+      <div class="kv"><span class="k">status</span><span class="v hi">READY</span></div>
+      <div class="kv"><span class="k">quant</span><span class="v">per-channel symm.</span></div>
+      <div class="kv"><span class="k">simd</span><span class="v">NEON ×4 FMA</span></div>
+      <div class="kv"><span class="k">kv-cache</span><span class="v">per-layer append</span></div>
+      <div class="kv"><span class="k">sampling</span><span class="v">greedy argmax</span></div>
+      <div class="kv"><span class="k">stream</span><span class="v">SSE token</span></div>
     </div>
   </div>
 
-  <textarea id="prompt" placeholder="prompt…">The capital of France is</textarea>
+  <div class="input-row">
+    <textarea id="prompt" placeholder="enter prompt and press ⌘⏎">The capital of France is</textarea>
+  </div>
 
   <div class="controls">
-    <span class="control">tokens
-      <input id="maxTokens" type="number" value="48" min="1" max="256">
-    </span>
-    <span class="control">quant
-      <select id="quant">
-        <option value="fp32" selected>fp32</option>
-        <option value="int8">int8</option>
-        <option value="int4">int4</option>
-      </select>
-    </span>
+    <span class="pill-label">tokens</span>
+    <input id="maxTokens" type="number" value="48" min="1" max="256">
+    <span class="pill-label" style="margin-left:.5rem">quant</span>
+    <select id="quant">
+      <option value="fp32" selected>fp32</option>
+      <option value="int8">int8</option>
+      <option value="int4">int4</option>
+    </select>
+    <span class="hint" style="margin-left:1rem"><kbd>⌘⏎</kbd> run · <kbd>esc</kbd> stop</span>
     <div class="spacer"></div>
-    <button class="ghost" id="compareBtn">compare all</button>
-    <button id="goBtn">generate</button>
+    <button class="btn secondary" id="compareBtn">▣ COMPARE</button>
+    <button class="btn primary"   id="goBtn">▶ EXECUTE</button>
   </div>
-  <div class="status"><kbd>⌘</kbd><kbd>⏎</kbd> submit · <kbd>esc</kbd> stop</div>
 
-  <div class="output" id="out"><span class="prompt">(output appears here)</span></div>
-  <div class="status" id="status"></div>
+  <div class="output" id="out"><span class="prompt">// awaiting input</span></div>
+
+  <div class="livestats">
+    <span><span class="stat-k">TOK/S</span></span>
+    <span class="spark" id="spark"></span>
+    <span><span class="stat-k">GEN </span><span class="stat-v" id="statN">0</span></span>
+    <span><span class="stat-k">ELAPSED </span><span class="stat-v cyan" id="statMs">0ms</span></span>
+    <span><span class="stat-k">QUANT </span><span class="stat-v amber" id="statQ">—</span></span>
+  </div>
 
   <div class="compare" id="compare" style="display:none"></div>
 </main>
@@ -232,14 +429,53 @@ static const char* kIndexHtml = R"HTML(<!doctype html>
 const $ = (id) => document.getElementById(id);
 const promptEl = $('prompt');
 const outEl    = $('out');
-const statusEl = $('status');
 const compareEl = $('compare');
 const goBtn   = $('goBtn');
 const compareBtn = $('compareBtn');
+const spark   = $('spark');
 
 let activeStream = null;
+let tpsHistory = [];
 
-// ── fetch and render model info on load ─────────────────────────────────────
+// ── boot sequence ───────────────────────────────────────────────────────────
+async function playBoot() {
+  const lines = [
+    '> initializing minillm runtime',
+    '> loading model weights into memory',
+    '> building rope cache [max_pos=2048, head_dim=64]',
+    '> opening tokenizer: vocab=49152',
+    '> starting http server on loopback:8080',
+    '> system ready',
+  ];
+  const container = $('bootLines');
+  for (const text of lines) {
+    const div = document.createElement('div');
+    div.className = 'line';
+    div.textContent = text;
+    container.appendChild(div);
+    div.style.opacity = 1;
+    div.style.width = '0';
+    const target = text.length + 'ch';
+    div.style.transition = 'width .18s steps(' + text.length + ')';
+    requestAnimationFrame(() => { div.style.width = target; });
+    await sleep(170);
+    div.classList.add('ok');
+  }
+  await sleep(300);
+  $('boot').classList.add('hide');
+  setTimeout(() => $('boot').remove(), 400);
+}
+const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+
+// ── clock ───────────────────────────────────────────────────────────────────
+function tickClock() {
+  const d = new Date();
+  const pad = (n) => String(n).padStart(2, '0');
+  $('clock').textContent = `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+}
+setInterval(tickClock, 1000); tickClock();
+
+// ── model info ──────────────────────────────────────────────────────────────
 async function loadInfo() {
   try {
     const r = await fetch('/info');
@@ -248,22 +484,33 @@ async function loadInfo() {
     $('iLayers').textContent  = d.layers;
     $('iHidden').textContent  = d.hidden;
     $('iHeads').textContent   = d.n_heads;
-    $('iKvHeads').textContent = d.n_kv_heads;
+    $('iKvHeads').textContent = d.n_kv_heads + ' (GQA)';
     $('iHeadDim').textContent = d.head_dim;
-    $('mFp32').textContent = fmtMB(d.mem_fp32_bytes);
-    $('mInt8').textContent = fmtMB(d.mem_int8_bytes) + '  (' + (d.mem_fp32_bytes/d.mem_int8_bytes).toFixed(1) + '×)';
-    $('mInt4').textContent = fmtMB(d.mem_int4_bytes) + '  (' + (d.mem_fp32_bytes/d.mem_int4_bytes).toFixed(1) + '×)';
-  } catch (e) { console.warn('info load failed', e); }
+    $('sizeFp32').textContent = fmtMB(d.mem_fp32_bytes);
+    $('sizeInt8').textContent = fmtMB(d.mem_int8_bytes);
+    $('sizeInt4').textContent = fmtMB(d.mem_int4_bytes);
+    $('barInt8').style.width = (100 * d.mem_int8_bytes / d.mem_fp32_bytes) + '%';
+    $('barInt4').style.width = (100 * d.mem_int4_bytes / d.mem_fp32_bytes) + '%';
+    $('multInt8').textContent = (d.mem_fp32_bytes/d.mem_int8_bytes).toFixed(1) + '×';
+    $('multInt4').textContent = (d.mem_fp32_bytes/d.mem_int4_bytes).toFixed(1) + '×';
+  } catch (e) { console.warn('info failed', e); }
 }
-function fmtMB(b) { return (b / 1024 / 1024).toFixed(1) + ' MB'; }
+function fmtMB(b) { return (b/1024/1024).toFixed(1) + 'MB'; }
 
-$('infoToggle').addEventListener('click', () => {
-  $('infoPanel').classList.toggle('open');
-  const open = $('infoPanel').classList.contains('open');
-  $('infoToggle').textContent = open ? 'model info ▴' : 'model info ▾';
-});
+// ── sparkline ───────────────────────────────────────────────────────────────
+function pushSpark(tps) {
+  tpsHistory.push(tps);
+  if (tpsHistory.length > 40) tpsHistory.shift();
+  const max = Math.max(1, ...tpsHistory);
+  spark.innerHTML = '';
+  for (const v of tpsHistory) {
+    const s = document.createElement('span');
+    s.style.height = Math.max(2, 20 * v / max) + 'px';
+    spark.appendChild(s);
+  }
+}
 
-// ── streaming generation (SSE) ──────────────────────────────────────────────
+// ── streaming ───────────────────────────────────────────────────────────────
 function streamGenerate() {
   stopStream();
   compareEl.style.display = 'none';
@@ -275,48 +522,53 @@ function streamGenerate() {
   if (!prompt.trim()) return;
 
   goBtn.disabled = true;
-  statusEl.innerHTML = '<span>streaming…</span>';
+  tpsHistory = []; spark.innerHTML = '';
+  $('statN').textContent  = '0';
+  $('statMs').textContent = '0ms';
+  $('statQ').textContent  = quant;
+
   outEl.innerHTML = '<span class="prompt"></span><span class="gen"></span><span class="caret"></span>';
   outEl.querySelector('.prompt').textContent = prompt;
   const genSpan = outEl.querySelector('.gen');
 
   const url = `/stream?prompt=${encodeURIComponent(prompt)}&max_tokens=${max_tokens}&quant=${quant}`;
-  const es = new EventSource(url);
+  const es  = new EventSource(url);
   activeStream = es;
 
-  let tokCount = 0;
   const t0 = performance.now();
 
   es.addEventListener('token', (e) => {
     const d = JSON.parse(e.data);
-    genSpan.textContent += d.delta;
-    tokCount = d.n;
+    // Append the delta as a flashing span, then collapse once animation ends
+    const flash = document.createElement('span');
+    flash.className = 'tok-flash';
+    flash.textContent = d.delta;
+    genSpan.appendChild(flash);
+    setTimeout(() => {
+      // merge the flashed span's text into the parent to keep DOM small
+      const t = flash.textContent;
+      flash.replaceWith(document.createTextNode(t));
+    }, 500);
+
     const elapsed = (performance.now() - t0) / 1000;
-    statusEl.innerHTML =
-      `<span>streaming </span><span class="val">${tokCount}</span>` +
-      `<span> · </span><span class="val">${(tokCount/elapsed).toFixed(0)}</span><span> tok/s</span>` +
-      `<span> · </span><span class="val">${quant}</span>`;
+    const tps = d.n / elapsed;
+    pushSpark(tps);
+    $('statN').textContent  = d.n;
+    $('statMs').textContent = Math.round(elapsed * 1000) + 'ms';
   });
 
   es.addEventListener('done', (e) => {
     const d = JSON.parse(e.data);
     outEl.querySelector('.caret')?.remove();
-    statusEl.innerHTML =
-      `<span>done </span><span class="val">${d.n_tokens}</span><span> tokens · </span>` +
-      `<span class="val">${d.ms}</span><span> ms · </span>` +
-      `<span class="val">${d.tok_per_sec}</span><span> tok/s · </span>` +
-      `<span class="val">${quant}</span>`;
-    es.close();
-    activeStream = null;
-    goBtn.disabled = false;
+    $('statN').textContent  = d.n_tokens;
+    $('statMs').textContent = d.ms + 'ms';
+    es.close(); activeStream = null; goBtn.disabled = false;
   });
 
   es.onerror = () => {
     outEl.querySelector('.caret')?.remove();
-    statusEl.innerHTML = '<span class="err">connection lost</span>';
-    es.close();
-    activeStream = null;
-    goBtn.disabled = false;
+    $('statMs').innerHTML = '<span class="err">LOST</span>';
+    es.close(); activeStream = null; goBtn.disabled = false;
   };
 }
 
@@ -326,24 +578,22 @@ function stopStream() {
   goBtn.disabled = false;
 }
 
-// ── compare all three quant levels ──────────────────────────────────────────
+// ── compare ─────────────────────────────────────────────────────────────────
 async function compareAll() {
   stopStream();
   const prompt     = promptEl.value;
   const max_tokens = parseInt($('maxTokens').value, 10);
   if (!prompt.trim()) return;
 
-  compareBtn.disabled = true;
-  goBtn.disabled = true;
-  statusEl.innerHTML = '<span>running all three (fp32, int8, int4)…</span>';
-  outEl.innerHTML = '<span class="prompt">(see comparison below)</span>';
+  compareBtn.disabled = true; goBtn.disabled = true;
+  outEl.innerHTML = '<span class="prompt">// running three quantization levels in parallel…</span>';
   compareEl.innerHTML = '';
   compareEl.style.display = 'grid';
+  $('statQ').textContent = 'all';
 
   try {
     const r = await fetch('/compare', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
+      method: 'POST', headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({ prompt, max_tokens }),
     });
     const data = await r.json();
@@ -351,27 +601,27 @@ async function compareAll() {
     for (const q of ['fp32', 'int8', 'int4']) {
       const d = data[q];
       const col = document.createElement('div');
-      col.className = 'col';
+      col.className = 'col ' + q;
+      col.dataset.q = q;
       col.innerHTML = `
-        <h4>${q}<span class="pill">${d.tok_per_sec} tok/s</span></h4>
+        <div class="perf">
+          <span>${d.n_tokens} tok · <span class="v">${d.ms}ms</span></span>
+          <span><span class="v">${d.tok_per_sec}</span> tok/s</span>
+        </div>
         <div class="text"><span class="prompt">${escapeHtml(prompt)}</span>${escapeHtml(d.generated)}</div>
-        <div class="foot"><span>${d.n_tokens} tokens</span><span class="val">${d.ms} ms</span></div>
       `;
       compareEl.appendChild(col);
     }
-    statusEl.innerHTML = '<span>comparison complete</span>';
+    outEl.innerHTML = '<span class="prompt">// comparison complete — scroll for 3-way diff</span>';
   } catch (e) {
-    statusEl.innerHTML = `<span class="err">error: ${escapeHtml(e.message)}</span>`;
+    outEl.innerHTML = `<span style="color: var(--red)">// error: ${escapeHtml(e.message)}</span>`;
   } finally {
-    compareBtn.disabled = false;
-    goBtn.disabled = false;
+    compareBtn.disabled = false; goBtn.disabled = false;
   }
 }
 
 function escapeHtml(s) {
-  return (s || '').replace(/[&<>"']/g, c => ({
-    '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
-  }[c]));
+  return (s || '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 }
 
 goBtn.addEventListener('click', streamGenerate);
@@ -383,7 +633,9 @@ document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') stopStream();
 });
 
+// init
 loadInfo();
+playBoot();
 </script>
 </body>
 </html>
