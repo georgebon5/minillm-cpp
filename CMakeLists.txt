@@ -41,6 +41,10 @@ target_include_directories(minillm PUBLIC ${PROJECT_SOURCE_DIR}/include)
 target_compile_features(minillm PUBLIC cxx_std_20)
 target_link_libraries(minillm PUBLIC nlohmann_json::nlohmann_json)
 
+# ── CLI ───────────────────────────────────────────────────────────────────────
+add_executable(minillm-generate src/main.cpp)
+target_link_libraries(minillm-generate PRIVATE minillm)
+
 # ── Tests ─────────────────────────────────────────────────────────────────────
 enable_testing()
 add_subdirectory(tests)

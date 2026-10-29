@@ -30,7 +30,7 @@ TEST_CASE("parse_safetensors_header: tensor count", "[safetensors]") {
 }
 
 TEST_CASE("parse_safetensors_header: F32 shape and offsets", "[safetensors]") {
-    auto& e = parse_safetensors_header(SAMPLE_HEADER).at("embed_tokens.weight");
+    auto e = parse_safetensors_header(SAMPLE_HEADER).at("embed_tokens.weight");
     REQUIRE(e.dtype        == DType::F32);
     REQUIRE(e.shape        == std::vector<size_t>{49152, 576});
     REQUIRE(e.offset_start == 0);

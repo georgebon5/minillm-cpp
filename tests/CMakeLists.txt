@@ -20,7 +20,9 @@ function(add_minillm_test name)
     target_compile_definitions(${name} PRIVATE
         MINILLM_PROJECT_ROOT="${CMAKE_SOURCE_DIR}"
     )
-    catch_discover_tests(${name})
+    # Catch2 v3 exits with code 4 when all tests are skipped (no model files).
+    # SKIP_RETURN_CODE tells CTest to report that as SKIP, not FAIL.
+    catch_discover_tests(${name} PROPERTIES SKIP_RETURN_CODE 4)
 endfunction()
 
 # ── Tests (one line per test file added each milestone) ───────────────────────

@@ -18,18 +18,19 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Cache Catch2 so it isn't re-downloaded on every push
+      # Cache compiled dependencies (Catch2, nlohmann_json) across pushes.
       - name: Cache CMake dependencies
         uses: actions/cache@v4
         with:
           path: build/_deps
-          key: ${{ runner.os }}-cmake-deps-${{ hashFiles('tests/CMakeLists.txt') }}
+          key: ${{ runner.os }}-cmake-deps-${{ hashFiles('CMakeLists.txt', 'tests/CMakeLists.txt') }}
+          restore-keys: ${{ runner.os }}-cmake-deps-
 
       - name: Configure (Debug + ASan/UBSan)
         run: cmake -B build -DCMAKE_BUILD_TYPE=Debug
 
-      - name: Build
+      - name: Build (library + CLI + tests)
         run: cmake --build build --parallel
 
-      - name: Test
-        run: ctest --test-dir build --output-on-failure
+      - name: Test (unit + integration; model-file tests auto-skip)
+        run: ctest --test-dir build --output-on-failure --timeout 120
