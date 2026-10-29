@@ -5,7 +5,46 @@
 #include <limits>
 #include <stdexcept>
 
+#ifdef __ARM_NEON
+#  include <arm_neon.h>
+#endif
+
 namespace minillm {
+
+// ── SIMD helpers ──────────────────────────────────────────────────────────────
+
+// Dot product of two float arrays of length n.
+// Uses 4-wide NEON FMA on AArch64, falls back to scalar elsewhere.
+static float dot_f32(const float* __restrict__ a,
+                     const float* __restrict__ b,
+                     size_t n) {
+#ifdef __ARM_NEON
+    float32x4_t acc0 = vdupq_n_f32(0.f);
+    float32x4_t acc1 = vdupq_n_f32(0.f);
+    float32x4_t acc2 = vdupq_n_f32(0.f);
+    float32x4_t acc3 = vdupq_n_f32(0.f);
+
+    size_t k = 0;
+    for (; k + 16 <= n; k += 16) {
+        acc0 = vfmaq_f32(acc0, vld1q_f32(a + k),      vld1q_f32(b + k));
+        acc1 = vfmaq_f32(acc1, vld1q_f32(a + k +  4), vld1q_f32(b + k +  4));
+        acc2 = vfmaq_f32(acc2, vld1q_f32(a + k +  8), vld1q_f32(b + k +  8));
+        acc3 = vfmaq_f32(acc3, vld1q_f32(a + k + 12), vld1q_f32(b + k + 12));
+    }
+    for (; k + 4 <= n; k += 4)
+        acc0 = vfmaq_f32(acc0, vld1q_f32(a + k), vld1q_f32(b + k));
+
+    float32x4_t acc = vaddq_f32(vaddq_f32(acc0, acc1), vaddq_f32(acc2, acc3));
+    float sum = vaddvq_f32(acc);
+
+    for (; k < n; ++k) sum += a[k] * b[k];
+    return sum;
+#else
+    float sum = 0.f;
+    for (size_t k = 0; k < n; ++k) sum += a[k] * b[k];
+    return sum;
+#endif
+}
 
 // ── Embedding ─────────────────────────────────────────────────────────────────
 
@@ -55,15 +94,21 @@ Tensor rms_norm(const Tensor& x, const Tensor& weight, float eps) {
         const float* row = xp + b * hidden;
         float*       dst = yp + b * hidden;
 
-        // Mean of squares
-        float ms = 0.f;
-        for (size_t j = 0; j < hidden; ++j)
-            ms += row[j] * row[j];
-        ms /= static_cast<float>(hidden);
-
+        // Mean of squares (vectorized)
+        float ms = dot_f32(row, row, hidden) / static_cast<float>(hidden);
         const float scale = 1.f / std::sqrt(ms + eps);
 
-        for (size_t j = 0; j < hidden; ++j)
+        // Scale + weight multiply (vectorized with NEON)
+        size_t j = 0;
+#ifdef __ARM_NEON
+        const float32x4_t vscale = vdupq_n_f32(scale);
+        for (; j + 4 <= hidden; j += 4) {
+            float32x4_t r = vld1q_f32(row + j);
+            float32x4_t w = vld1q_f32(wp  + j);
+            vst1q_f32(dst + j, vmulq_f32(vmulq_f32(r, vscale), w));
+        }
+#endif
+        for (; j < hidden; ++j)
             dst[j] = row[j] * scale * wp[j];
     }
     return out;
@@ -89,13 +134,8 @@ Tensor linear(const Tensor& x, const Tensor& W, const Tensor* b) {
     // y[i,j] = dot(x[i,:], W[j,:])
     for (size_t i = 0; i < seq_len; ++i) {
         const float* xrow = xp + i * in_feat;
-        for (size_t j = 0; j < out_feat; ++j) {
-            const float* Wrow = Wp + j * in_feat;
-            float sum = 0.f;
-            for (size_t k = 0; k < in_feat; ++k)
-                sum += xrow[k] * Wrow[k];
-            yp[i * out_feat + j] = sum;
-        }
+        for (size_t j = 0; j < out_feat; ++j)
+            yp[i * out_feat + j] = dot_f32(xrow, Wp + j * in_feat, in_feat);
     }
 
     if (b) {
