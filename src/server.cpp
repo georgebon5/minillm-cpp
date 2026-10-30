@@ -16,6 +16,7 @@
 #include <unistd.h>
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <fstream>
 #include <cstdio>
@@ -988,7 +989,9 @@ struct Model {
 struct ServerState {
     std::vector<std::unique_ptr<Model>> models;
     std::unordered_map<std::string, Model*> by_name;
-    clk::time_point start_time = clk::now();
+    clk::time_point start_time    = clk::now();
+    std::atomic<uint64_t> total_requests{0};
+    std::atomic<uint64_t> total_tokens{0};
 
     Model& pick(const std::string& name) {
         if (!name.empty()) {
@@ -1240,6 +1243,8 @@ static std::string handle_generate(ServerState& st, const std::string& body) {
     Model& m = st.pick(model_name);
     const ModelWeights& w = ensure_weights(m, quant);
     auto r = run_generate(m, w, prompt, max_tokens, parse_sampling(req), system_prompt);
+    ++st.total_requests;
+    st.total_tokens += static_cast<uint64_t>(r.n_tokens);
     json j = {{"prompt",prompt},{"generated",r.generated},{"n_tokens",r.n_tokens},
               {"ms",r.ms},{"tok_per_sec",r.tok_per_sec}};
     return http_response(200, "application/json", safe_dump(j));
@@ -1447,6 +1452,8 @@ static void handle_stream(ServerState& st, int sock, const std::string& qs) {
     double tps = gen_ids.empty() ? 0 : static_cast<double>(gen_ids.size()) / (ms / 1000.0);
     json done = {{"n_tokens",gen_ids.size()},{"ms",ms},{"tok_per_sec",static_cast<int>(tps)}};
     emit("done", safe_dump(done));
+    ++st.total_requests;
+    st.total_tokens += static_cast<uint64_t>(gen_ids.size());
 }
 
 // ── Dispatcher ───────────────────────────────────────────────────────────────
@@ -1473,7 +1480,10 @@ static void dispatch(ServerState& st, int sock, const std::string& raw) {
     if (method == "GET" && path == "/health") {
         auto uptime = std::chrono::duration_cast<std::chrono::seconds>(
                           clk::now() - st.start_time).count();
-        json h = {{"status","ok"},{"uptime_s", uptime},{"models", (int)st.models.size()}};
+        json h = {{"status","ok"}, {"uptime_s", uptime},
+                  {"models", (int)st.models.size()},
+                  {"total_requests", st.total_requests.load()},
+                  {"total_tokens",   st.total_tokens.load()}};
         return send_all(sock, http_response(200, "application/json", h.dump()));
     }
     if (method == "GET" && path == "/stream")
