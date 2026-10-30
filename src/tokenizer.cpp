@@ -65,10 +65,12 @@ Tokenizer parse_tokenizer(std::string_view json_text) {
         }
     }
 
-    // Build sorted special-token list once for encode() to use.
+    // Build sorted special-token list and lookup set once at parse time.
     for (const auto& [s, id] : tok.token_to_id) {
-        if (s.size() >= 2 && s.front() == '<' && s.back() == '>')
+        if (s.size() >= 2 && s.front() == '<' && s.back() == '>') {
             tok.special_tokens.push_back({s, id});
+            tok.special_id_set[id] = true;
+        }
     }
     std::sort(tok.special_tokens.begin(), tok.special_tokens.end(),
               [](const auto& a, const auto& b){ return a.first.size() > b.first.size(); });
@@ -227,10 +229,12 @@ static const std::unordered_map<std::string, uint8_t>& bpe_char_to_byte_map() {
 }
 
 std::string decode(const Tokenizer& tok, std::span<const int32_t> ids) {
-    // Step 1: concatenate token strings.
+    // Step 1: concatenate token strings, skipping special tokens.
+    // Special tokens (e.g. <|im_end|>) are control signals, not text content.
     std::string bpe_text;
     for (int32_t id : ids) {
         if (id < 0 || static_cast<size_t>(id) >= tok.id_to_token.size()) continue;
+        if (tok.is_special_id(id)) continue;
         bpe_text += tok.id_to_token[static_cast<size_t>(id)];
     }
 

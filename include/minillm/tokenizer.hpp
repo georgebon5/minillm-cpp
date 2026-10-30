@@ -30,7 +30,11 @@ struct Tokenizer {
     // Built once at parse time so encode() never rebuilds it per call.
     std::vector<std::pair<std::string, int32_t>> special_tokens;
 
+    // Set of special-token IDs for O(1) lookup during decode.
+    std::unordered_map<int32_t, bool> special_id_set;
+
     bool has_chat_template() const { return im_start_id >= 0 && im_end_id >= 0; }
+    bool is_special_id(int32_t id) const { return special_id_set.count(id) > 0; }
 
     int32_t vocab_size() const { return static_cast<int32_t>(id_to_token.size()); }
 };
