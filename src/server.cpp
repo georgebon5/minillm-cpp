@@ -1302,7 +1302,8 @@ static std::string handle_generate(ServerState& st, const std::string& body) {
     ++st.total_requests;
     st.total_tokens += static_cast<uint64_t>(r.n_tokens);
     json j = {{"prompt",prompt},{"generated",r.generated},{"n_tokens",r.n_tokens},
-              {"ms",r.ms},{"tok_per_sec",r.tok_per_sec}};
+              {"ms",r.ms},{"tok_per_sec",r.tok_per_sec},
+              {"model", m.name}, {"quant", quant}};
     return http_response(200, "application/json", safe_dump(j));
 }
 
@@ -1515,7 +1516,8 @@ static void handle_stream(ServerState& st, int sock, const std::string& qs) {
 
     int ms = static_cast<int>(std::chrono::duration<double, std::milli>(clk::now() - t0).count());
     double tps = gen_ids.empty() ? 0 : static_cast<double>(gen_ids.size()) / (ms / 1000.0);
-    json done = {{"n_tokens",gen_ids.size()},{"ms",ms},{"tok_per_sec",static_cast<int>(tps)}};
+    json done = {{"n_tokens",gen_ids.size()},{"ms",ms},{"tok_per_sec",static_cast<int>(tps)},
+                 {"model", m.name}, {"quant", quant}};
     emit("done", safe_dump(done));
     ++st.total_requests;
     st.total_tokens += static_cast<uint64_t>(gen_ids.size());
