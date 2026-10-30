@@ -263,6 +263,43 @@ TEST_CASE("decode: interleaved special tokens stripped correctly", "[tokenizer][
     REQUIRE(decode(tok, ids) == "hihi");
 }
 
+// ── encode: stress / edge-case tests ─────────────────────────────────────────
+
+TEST_CASE("encode: 100 consecutive special tokens produce correct id sequence", "[tokenizer][stress]") {
+    Tokenizer tok = parse_tokenizer(kSmolLM2Json);
+    std::string input;
+    for (int i = 0; i < 100; ++i) input += "<|im_start|>";
+    auto ids = encode(tok, input);
+    REQUIRE(ids.size() == 100);
+    for (int32_t id : ids) REQUIRE(id == tok.im_start_id);
+}
+
+TEST_CASE("encode: alternating special and regular tokens", "[tokenizer][stress]") {
+    Tokenizer tok = parse_tokenizer(kSmolLM2Json);
+    // hello (id 3 in kSmolLM2Json) interleaved with <|im_end|> (id 2)
+    // kSmolLM2Json has no merges, so "hello" → unk in this fixture — just verify
+    // that special tokens land correctly regardless of what's between them.
+    std::string input = "<|im_start|><|im_end|><|im_start|><|im_end|>";
+    auto ids = encode(tok, input);
+    REQUIRE(ids.size() == 4);
+    REQUIRE(ids[0] == tok.im_start_id);
+    REQUIRE(ids[1] == tok.im_end_id);
+    REQUIRE(ids[2] == tok.im_start_id);
+    REQUIRE(ids[3] == tok.im_end_id);
+}
+
+TEST_CASE("encode: empty string after stripping gives empty ids", "[tokenizer][stress]") {
+    Tokenizer tok = parse_tokenizer(kSmolLM2Json);
+    REQUIRE(encode(tok, "").empty());
+}
+
+TEST_CASE("encode: special token at end of text", "[tokenizer][stress]") {
+    Tokenizer tok = parse_tokenizer(kSmolLM2Json);
+    auto ids = encode(tok, "<|endoftext|>");
+    REQUIRE(ids.size() == 1);
+    REQUIRE(ids[0] == tok.eos_id);
+}
+
 // ── decode tests ──────────────────────────────────────────────────────────────
 TEST_CASE("decode: empty ids → empty string", "[tokenizer][decode]") {
     Tokenizer tok = parse_tokenizer(kEncodeJson);
