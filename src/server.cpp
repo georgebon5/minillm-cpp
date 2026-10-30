@@ -334,6 +334,16 @@ static const char* kIndexHtml = R"HTML(<!doctype html>
     display: block; font-size: .68rem; text-transform: uppercase;
     letter-spacing: .06em; color: var(--muted); margin-bottom: .3rem;
   }
+  .bubble pre {
+    background: rgba(0,0,0,.35); border: 1px solid var(--border);
+    border-radius: 6px; padding: .6rem .8rem; margin: .4rem 0;
+    overflow-x: auto; font-family: var(--mono); font-size: .82rem; white-space: pre;
+  }
+  .bubble code {
+    font-family: var(--mono); font-size: .85em;
+    background: rgba(0,0,0,.3); border-radius: 3px; padding: 1px 4px;
+  }
+  .bubble pre code { background: none; padding: 0; }
 
   /* floating tooltip with top-5 for a specific token */
   .tok-popover {
@@ -859,7 +869,9 @@ function streamGenerate() {
     const d = JSON.parse(e.data);
     activeCaret?.remove();
     if (isInstruct) {
-      chatMessages.push({role: 'assistant', content: genSpan.textContent});
+      const rawText = genSpan.textContent;
+      chatMessages.push({role: 'assistant', content: rawText});
+      genSpan.innerHTML = renderMarkdown(rawText);
       outEl.scrollTop = outEl.scrollHeight;
       promptEl.focus();
     }
@@ -1079,6 +1091,23 @@ document.addEventListener('click', (e) => {
 
 function escapeHtml(s) {
   return (s || '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+function renderMarkdown(text) {
+  // Protect fenced code blocks from inline processing.
+  const blocks = [];
+  text = text.replace(/```(\w*)\n?([\s\S]*?)```/g, (_, lang, code) => {
+    const i = blocks.length;
+    blocks.push(`<pre><code${lang ? ` class="language-${escapeHtml(lang)}"` : ''}>${escapeHtml(code)}</code></pre>`);
+    return `\x00B${i}\x00`;
+  });
+  text = escapeHtml(text);
+  text = text.replace(/`([^`\n]+)`/g, '<code>$1</code>');
+  text = text.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+  text = text.replace(/\*(.+?)\*/g, '<em>$1</em>');
+  text = text.replace(/^#{1,3} (.+)$/gm, '<strong>$1</strong>');
+  text = text.replace(/\x00B(\d+)\x00/g, (_, i) => blocks[parseInt(i)]);
+  return text;
 }
 
 goBtn.addEventListener('click', streamGenerate);
