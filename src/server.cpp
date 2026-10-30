@@ -1358,8 +1358,10 @@ static GenResult run_generate(Model& m, const ModelWeights& w,
     }
     max_tokens = std::min(max_tokens, max_ctx - prompt_len);
 
+    SamplingParams sp = sampling;
+    if (m.tok.im_end_id >= 0) sp.stop2 = m.tok.im_end_id;
     auto t0 = clk::now();
-    auto ids = generate(w, m.cfg, m.rope, prompt_ids, max_tokens, m.tok.eos_id, sampling);
+    auto ids = generate(w, m.cfg, m.rope, prompt_ids, max_tokens, m.tok.eos_id, sp);
     int ms = static_cast<int>(std::chrono::duration<double, std::milli>(clk::now() - t0).count());
     double tps = ids.empty() ? 0 : static_cast<double>(ids.size()) / (ms / 1000.0);
     return { decode(m.tok, ids), static_cast<int>(ids.size()), ms, static_cast<int>(tps) };
@@ -1639,7 +1641,7 @@ static void handle_stream(ServerState& st, int sock, const std::string& qs) {
             emit("token", safe_dump(ev));
         }
 
-        if (next_id == m.tok.eos_id) break;
+        if (next_id == m.tok.eos_id || next_id == m.tok.im_end_id) break;
         logits = forward_one(w, m.cfg, m.rope, next_id, kv);
     }
 

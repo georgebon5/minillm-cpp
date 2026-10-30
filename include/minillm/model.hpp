@@ -87,6 +87,7 @@ struct SamplingParams {
     float    rep_penalty  = 1.0f;  // 1.0 = disabled; typical 1.1–1.3 to suppress loops
     int      rep_window   = 128;   // how many recent tokens to apply penalty on
     uint64_t seed         = 0;     // 0 → use random_device
+    int32_t  stop2        = -1;    // second stop token, -1 = disabled (used for <|im_end|>)
 };
 
 // Generate up to max_new_tokens tokens given a prompt. Returns only the newly

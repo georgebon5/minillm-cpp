@@ -330,7 +330,7 @@ std::vector<int32_t> generate(const ModelWeights&       w,
                                        sampling, rng, history, scratch);
         generated.push_back(next_id);
         history.push_back(next_id);
-        if (next_id == eos_id) break;
+        if (next_id == eos_id || (sampling.stop2 >= 0 && next_id == sampling.stop2)) break;
         logits = forward_one(w, cfg, rope, next_id, kv);
     }
     return generated;
