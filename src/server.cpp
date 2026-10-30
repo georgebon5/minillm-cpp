@@ -1515,6 +1515,24 @@ static void dispatch(ServerState& st, int sock, const std::string& raw) {
     }
     if (method == "GET" && path == "/stream")
         return handle_stream(st, sock, query);
+    if (method == "POST" && path == "/tokenize") {
+        size_t header_end = raw.find("\r\n\r\n");
+        std::string body  = (header_end != std::string::npos) ? raw.substr(header_end + 4) : "";
+        json req;
+        try { req = json::parse(body); } catch (...) {
+            return send_all(sock, http_response(400, "application/json", R"({"error":"bad json"})"));
+        }
+        std::string text       = req.value("text", "");
+        std::string model_name = req.value("model", "");
+        if (text.empty())
+            return send_all(sock, http_response(400, "application/json", R"({"error":"empty text"})"));
+        Model& m = st.pick(model_name);
+        auto ids = encode(m.tok, text);
+        json j = {{"n_tokens", ids.size()},
+                  {"max_context", m.cfg.max_position_embeddings},
+                  {"remaining", m.cfg.max_position_embeddings - (int)ids.size()}};
+        return send_all(sock, http_response(200, "application/json", j.dump()));
+    }
 
     size_t header_end = raw.find("\r\n\r\n");
     std::string body  = (header_end != std::string::npos) ? raw.substr(header_end + 4) : "";
