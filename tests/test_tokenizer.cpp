@@ -217,6 +217,52 @@ TEST_CASE("encode: endoftext token gets correct id", "[tokenizer][special]") {
     REQUIRE(ids == std::vector<int32_t>{0});
 }
 
+// ── decode: special token stripping ──────────────────────────────────────────
+
+static const std::string kStripJson = R"({
+  "model": {
+    "type": "BPE",
+    "vocab": {
+      "<|endoftext|>": 0,
+      "<|im_start|>":  1,
+      "<|im_end|>":    2,
+      "h": 3, "i": 4, "hi": 5
+    },
+    "merges": ["h i"]
+  },
+  "added_tokens": [
+    {"id": 0, "content": "<|endoftext|>", "special": true},
+    {"id": 1, "content": "<|im_start|>",  "special": true},
+    {"id": 2, "content": "<|im_end|>",    "special": true}
+  ]
+})";
+
+TEST_CASE("decode: special tokens are stripped from output", "[tokenizer][decode]") {
+    Tokenizer tok = parse_tokenizer(kStripJson);
+    // Sequence: <|im_start|> "hi" <|im_end|> — only "hi" should survive
+    std::vector<int32_t> ids = {1, 5, 2};
+    REQUIRE(decode(tok, ids) == "hi");
+}
+
+TEST_CASE("decode: endoftext token stripped", "[tokenizer][decode]") {
+    Tokenizer tok = parse_tokenizer(kStripJson);
+    std::vector<int32_t> ids = {5, 0};  // "hi" + <|endoftext|>
+    REQUIRE(decode(tok, ids) == "hi");
+}
+
+TEST_CASE("decode: all-special sequence yields empty string", "[tokenizer][decode]") {
+    Tokenizer tok = parse_tokenizer(kStripJson);
+    std::vector<int32_t> ids = {0, 1, 2};
+    REQUIRE(decode(tok, ids).empty());
+}
+
+TEST_CASE("decode: interleaved special tokens stripped correctly", "[tokenizer][decode]") {
+    Tokenizer tok = parse_tokenizer(kStripJson);
+    // <|im_start|> "hi" <|im_end|> "hi" <|endoftext|>
+    std::vector<int32_t> ids = {1, 5, 2, 5, 0};
+    REQUIRE(decode(tok, ids) == "hihi");
+}
+
 // ── decode tests ──────────────────────────────────────────────────────────────
 TEST_CASE("decode: empty ids → empty string", "[tokenizer][decode]") {
     Tokenizer tok = parse_tokenizer(kEncodeJson);
