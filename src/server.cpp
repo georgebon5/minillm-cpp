@@ -510,7 +510,7 @@ static const char* kIndexHtml = R"HTML(<!doctype html>
 
   <!-- prompt section -->
   <div class="section-label">Prompt <div class="line"></div></div>
-  <textarea id="prompt" placeholder="enter prompt and press ⌘⏎">The capital of France is</textarea>
+  <textarea id="prompt" placeholder="enter prompt — ⌘⏎ to run (chat mode: Enter to send)">The capital of France is</textarea>
   <div class="presets" id="presets"></div>
 
   <div class="controls">
@@ -1113,7 +1113,9 @@ function renderMarkdown(text) {
 goBtn.addEventListener('click', streamGenerate);
 compareBtn.addEventListener('click', compareAll);
 promptEl.addEventListener('keydown', (e) => {
-  if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) streamGenerate();
+  if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { streamGenerate(); return; }
+  // In chat mode: plain Enter sends, Shift+Enter inserts a newline.
+  if (e.key === 'Enter' && isInstruct && !e.shiftKey) { e.preventDefault(); streamGenerate(); }
 });
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') stopStream();
