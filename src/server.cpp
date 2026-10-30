@@ -190,7 +190,7 @@ static const char* kIndexHtml = R"HTML(<!doctype html>
 
   /* ── prompt input ────────────────────────────────────────────────────── */
   textarea {
-    width: 100%; min-height: 68px; resize: vertical;
+    width: 100%; min-height: 68px; max-height: 320px; resize: none; overflow-y: auto;
     background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
     color: var(--fg); padding: .75rem .9rem;
     font-family: var(--mono); font-size: .9rem; line-height: 1.5;
@@ -584,10 +584,16 @@ async function updateTokenCount() {
     el.style.color  = d.n_tokens > d.max_context * 0.9 ? 'var(--red)' : 'var(--fg)';
   } catch { el.textContent = '?'; }
 }
+function autoResize(el) {
+  el.style.height = 'auto';
+  el.style.height = Math.min(el.scrollHeight, 320) + 'px';
+}
 promptEl.addEventListener('input', () => {
+  autoResize(promptEl);
   clearTimeout(tokenCountTimer);
   tokenCountTimer = setTimeout(updateTokenCount, 300);
 });
+autoResize(promptEl);
 
 const topPEl   = $('topP');
 const topPValEl = $('topPVal');
