@@ -464,6 +464,14 @@ static const char* kIndexHtml = R"HTML(<!doctype html>
     </div>
   </div>
 
+  <!-- system prompt (collapsible, only useful for Instruct models) -->
+  <details id="sysDetails" style="margin-bottom:.5rem;">
+    <summary style="cursor:pointer;color:var(--muted);font-size:.8rem;letter-spacing:.04em;text-transform:uppercase;user-select:none;">
+      System prompt <span id="sysActiveBadge" style="display:none;margin-left:.4rem;background:var(--accent-dim);color:var(--accent);border-radius:3px;padding:1px 5px;font-size:.72rem;">active</span>
+    </summary>
+    <textarea id="systemPrompt" placeholder="You are a helpful assistant." style="margin-top:.4rem;min-height:56px;font-size:.82rem;"></textarea>
+  </details>
+
   <!-- prompt section -->
   <div class="section-label">Prompt <div class="line"></div></div>
   <textarea id="prompt" placeholder="enter prompt and press ⌘⏎">The capital of France is</textarea>
@@ -536,6 +544,11 @@ const compareBtn = $('compareBtn');
 const spark   = $('spark');
 const tempEl  = $('temperature');
 const tempValEl = $('tempVal');
+const sysPEl   = $('systemPrompt');
+const sysActiveBadge = $('sysActiveBadge');
+sysPEl.addEventListener('input', () => {
+  sysActiveBadge.style.display = sysPEl.value.trim() ? 'inline' : 'none';
+});
 
 const topPEl   = $('topP');
 const topPValEl = $('topPVal');
@@ -660,10 +673,12 @@ function streamGenerate() {
   const temperature = parseFloat(tempEl.value);
   const top_p       = parseFloat(topPEl.value);
   const rep_penalty = parseFloat(repEl.value);
-  const model       = $('modelSel').value;
+  const model         = $('modelSel').value;
+  const system_prompt = sysPEl.value.trim();
   const url = `/stream?prompt=${encodeURIComponent(prompt)}&max_tokens=${max_tokens}` +
               `&quant=${quant}&model=${encodeURIComponent(model)}` +
-              `&temperature=${temperature}&top_p=${top_p}&rep_penalty=${rep_penalty}`;
+              `&temperature=${temperature}&top_p=${top_p}&rep_penalty=${rep_penalty}` +
+              (system_prompt ? `&system_prompt=${encodeURIComponent(system_prompt)}` : '');
   const es  = new EventSource(url);
   activeStream = es;
 
@@ -730,12 +745,14 @@ function streamIntoColumn(quant, prompt, max_tokens, model, column) {
     const text = column.querySelector('.text .gen');
     const perfTop = column.querySelector('.col-head .perf');
     const perfBot = column.querySelector('.perf.bot');
-    const temperature = parseFloat(tempEl.value);
-    const top_p       = parseFloat(topPEl.value);
-    const rep_penalty = parseFloat(repEl.value);
+    const temperature   = parseFloat(tempEl.value);
+    const top_p         = parseFloat(topPEl.value);
+    const rep_penalty   = parseFloat(repEl.value);
+    const system_prompt = sysPEl.value.trim();
     const url = `/stream?prompt=${encodeURIComponent(prompt)}&max_tokens=${max_tokens}` +
                 `&quant=${quant}&model=${encodeURIComponent(model)}` +
-                `&temperature=${temperature}&top_p=${top_p}&rep_penalty=${rep_penalty}`;
+                `&temperature=${temperature}&top_p=${top_p}&rep_penalty=${rep_penalty}` +
+                (system_prompt ? `&system_prompt=${encodeURIComponent(system_prompt)}` : '');
     const es = new EventSource(url);
     const t0 = performance.now();
     column.classList.add('running');
