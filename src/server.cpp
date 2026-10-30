@@ -416,8 +416,8 @@ static const char* kIndexHtml = R"HTML(<!doctype html>
     <span class="dot"></span>
     <span>minillm<span class="suffix">.cpp</span></span>
   </span>
-  <span class="meta">
-    SmolLM2-135M<span class="sep">·</span>ARM NEON<span class="sep">·</span>:8080
+  <span class="meta" id="navMeta">
+    —<span class="sep">·</span>ARM NEON<span class="sep">·</span>:8080
   </span>
   <span class="spacer"></span>
   <a href="https://github.com/georgebon5/minillm-cpp" target="_blank">source</a>
@@ -607,6 +607,10 @@ let tpsHistory = [];
 let MODELS = []; // all loaded models from /info
 
 function renderModelStats(m) {
+  // Update nav bar with live model info
+  $('navMeta').innerHTML =
+    `${m.name}<span class="sep">·</span>${m.layers}L·${m.hidden}d<span class="sep">·</span>ARM NEON<span class="sep">·</span>:8080`;
+
   $('iVocab').textContent   = m.vocab.toLocaleString();
   $('iLayers').textContent  = m.layers;
   $('iHidden').textContent  = m.hidden;
