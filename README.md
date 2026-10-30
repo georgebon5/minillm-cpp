@@ -119,6 +119,53 @@ The server does a RAM check before loading — it estimates the F32 footprint fr
 
 `GET /health` returns `{"status":"ok","uptime_s":…,"models":…}` if you want a liveness check.
 
+## API
+
+The server exposes a small JSON API alongside the web UI. All endpoints return `Access-Control-Allow-Origin: *`.
+
+### `GET /info`
+Returns model metadata for all loaded models.
+```json
+{
+  "default": "SmolLM2-360M-Instruct",
+  "models": [{
+    "name": "SmolLM2-360M-Instruct",
+    "layers": 32, "hidden": 960, "n_heads": 15, "n_kv_heads": 5,
+    "mem_fp32_bytes": 763363328,
+    "has_chat_template": true
+  }]
+}
+```
+
+### `GET /health`
+Liveness check.
+```json
+{"status": "ok", "uptime_s": 42, "models": 1, "total_requests": 7, "total_tokens": 312}
+```
+
+### `POST /generate`
+Blocking generation. Returns when all tokens are ready.
+```json
+// request
+{"prompt": "Hello", "max_tokens": 64, "temperature": 0.8, "top_p": 0.9,
+ "rep_penalty": 1.15, "quant": "fp32", "model": "SmolLM2-360M-Instruct",
+ "system_prompt": "You are a helpful assistant."}
+
+// response
+{"generated": "Hello! How can I help you?", "n_tokens": 8, "ms": 420, "tok_per_sec": 19}
+```
+
+### `GET /stream`
+Server-Sent Events stream. Query params mirror POST /generate fields.
+Events: `token` (delta + top-5 probabilities), `done` (final stats).
+
+### `POST /tokenize`
+Returns token count for a text string — useful for checking context budget before generating.
+```json
+// request: {"text": "Hello world", "model": "SmolLM2-360M-Instruct"}
+// response: {"n_tokens": 3, "max_context": 8192, "remaining": 8189}
+```
+
 ## Test
 
 ```bash
