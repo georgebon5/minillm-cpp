@@ -55,9 +55,11 @@ Tokenizer parse_tokenizer(std::string_view json_text) {
             if (!entry.contains("special") || !entry.at("special").get<bool>())
                 continue;
             const std::string& c = content;
-            if (c == "<unk>")         tok.unk_id = id;
-            else if (c == "<s>")      tok.bos_id = id;
-            else if (c == "</s>")     tok.eos_id = id;
+            if (c == "<unk>")                tok.unk_id = id;
+            else if (c == "<s>")             tok.bos_id = id;
+            else if (c == "</s>"     ||
+                     c == "<|endoftext|>" ||
+                     c == "<|eos|>")         tok.eos_id = id;
         }
     }
 
