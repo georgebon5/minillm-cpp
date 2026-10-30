@@ -567,6 +567,12 @@ static const char* kIndexHtml = R"HTML(<!doctype html>
              border-radius:4px;padding:2px 8px;font-size:.75rem;cursor:pointer;font-family:var(--mono);">
       clear
     </button>
+    <button id="newChatBtn" title="Start new conversation" onclick="clearOutput()"
+      style="display:none;margin-left:.4rem;background:none;border:1px solid rgba(124,111,245,.4);
+             color:var(--accent);border-radius:4px;padding:2px 8px;font-size:.75rem;
+             cursor:pointer;font-family:var(--mono);">
+      new chat
+    </button>
   </div>
   <div class="output" id="out"><span class="placeholder">Output will appear here.</span></div>
 
@@ -707,6 +713,7 @@ function renderModelStats(m) {
   isInstruct = !!m.has_chat_template;
   // Switching models resets the conversation.
   chatMessages = [];
+  $('newChatBtn').style.display = 'none';
   outEl.classList.remove('chat-mode');
   outEl.innerHTML = '<span class="placeholder">Output will appear here.</span>';
   let badge = $('instructBadge');
@@ -873,6 +880,7 @@ function streamGenerate() {
       chatMessages.push({role: 'assistant', content: rawText});
       genSpan.innerHTML = renderMarkdown(rawText);
       outEl.scrollTop = outEl.scrollHeight;
+      $('newChatBtn').style.display = 'inline';
       promptEl.focus();
     }
     $('statN').textContent  = d.n_tokens;
@@ -984,6 +992,7 @@ async function compareAll() {
 function clearOutput() {
   if (activeStream) { activeStream.close(); activeStream = null; }
   chatMessages = [];
+  $('newChatBtn').style.display = 'none';
   outEl.classList.remove('chat-mode');
   outEl.innerHTML = '<span class="placeholder">Output will appear here.</span>';
   $('statN').textContent  = '0';
