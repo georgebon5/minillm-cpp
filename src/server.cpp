@@ -1076,6 +1076,9 @@ static std::string http_response(int status, const std::string& ctype,
     r += "HTTP/1.1 " + std::to_string(status) + " " + st + "\r\n";
     r += "Content-Type: " + ctype + "\r\n";
     r += "Content-Length: " + std::to_string(body.size()) + "\r\n";
+    r += "Access-Control-Allow-Origin: *\r\n";
+    r += "Access-Control-Allow-Methods: GET, POST, OPTIONS\r\n";
+    r += "Access-Control-Allow-Headers: Content-Type\r\n";
     r += "Connection: close\r\n\r\n";
     r += body;
     return r;
@@ -1477,6 +1480,8 @@ static void dispatch(ServerState& st, int sock, const std::string& raw) {
     size_t qp = full.find('?');
     if (qp != std::string::npos) { path = full.substr(0, qp); query = full.substr(qp + 1); }
 
+    if (method == "OPTIONS")
+        return send_all(sock, http_response(200, "text/plain", ""));
     if (method == "GET" && (path == "/" || path == "/index.html"))
         return send_all(sock, http_response(200, "text/html; charset=utf-8", kIndexHtml));
     if (method == "GET" && path == "/info")
