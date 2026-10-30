@@ -608,6 +608,20 @@ function renderModelStats(m) {
   $('barInt4').style.width = (100 * m.mem_int4_bytes / m.mem_fp32_bytes) + '%';
   $('multInt8').textContent = (m.mem_fp32_bytes/m.mem_int8_bytes).toFixed(1) + '×';
   $('multInt4').textContent = (m.mem_fp32_bytes/m.mem_int4_bytes).toFixed(1) + '×';
+
+  // Show/hide Instruct badge and auto-open system prompt panel.
+  const isInstruct = !!m.has_chat_template;
+  let badge = $('instructBadge');
+  if (!badge) {
+    badge = document.createElement('span');
+    badge.id = 'instructBadge';
+    badge.style.cssText = 'margin-left:.4rem;background:rgba(56,189,248,.12);color:#38bdf8;' +
+                          'border-radius:3px;padding:1px 6px;font-size:.72rem;font-family:var(--mono);';
+    badge.textContent = 'instruct';
+    $('modelSel').insertAdjacentElement('afterend', badge);
+  }
+  badge.style.display = isInstruct ? 'inline' : 'none';
+  $('sysDetails').open = isInstruct;
 }
 
 async function loadInfo() {
@@ -627,6 +641,7 @@ async function loadInfo() {
     sel.addEventListener('change', () => {
       const picked = MODELS.find(x => x.name === sel.value);
       if (picked) renderModelStats(picked);
+      // Also update option labels in case of name-only rendering
     });
     renderModelStats(MODELS.find(x => x.name === sel.value) || MODELS[0]);
   } catch (e) { console.warn('info failed', e); }
