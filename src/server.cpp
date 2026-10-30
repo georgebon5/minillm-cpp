@@ -515,7 +515,7 @@ static const char* kIndexHtml = R"HTML(<!doctype html>
 
   <div class="controls">
     <div class="field"><label>tokens</label>
-      <input id="maxTokens" type="number" value="48" min="1" max="256">
+      <input id="maxTokens" type="number" value="512" min="1" max="2048">
     </div>
     <div class="field"><label>model</label>
       <select id="modelSel"></select>
@@ -1456,7 +1456,7 @@ static std::string handle_generate(ServerState& st, const std::string& body) {
     }
     std::string prompt        = req.value("prompt", "");
     std::string system_prompt = req.value("system_prompt", "");
-    int         max_tokens    = std::max(1, std::min(256, req.value("max_tokens", 48)));
+    int         max_tokens    = std::max(1, std::min(2048, req.value("max_tokens", 512)));
     std::string quant         = req.value("quant", "fp32");
     std::string model_name    = req.value("model", "");
     if (prompt.empty())
@@ -1481,7 +1481,7 @@ static std::string handle_compare(ServerState& st, const std::string& body) {
                              json{{"error", std::string("bad json: ") + e.what()}}.dump());
     }
     std::string prompt     = req.value("prompt", "");
-    int         max_tokens = std::max(1, std::min(256, req.value("max_tokens", 48)));
+    int         max_tokens = std::max(1, std::min(2048, req.value("max_tokens", 512)));
     if (prompt.empty())
         return http_response(400, "application/json", R"({"error":"empty prompt"})");
 
@@ -1505,7 +1505,7 @@ static std::string handle_compare(ServerState& st, const std::string& body) {
 static void handle_stream(ServerState& st, int sock, const std::string& qs) {
     std::string prompt        = query_param(qs, "prompt");
     std::string system_prompt = query_param(qs, "system_prompt");
-    int         max_tokens    = std::max(1, std::min(256, std::atoi(query_param(qs, "max_tokens").c_str())));
+    int         max_tokens    = std::max(1, std::min(2048, std::atoi(query_param(qs, "max_tokens").c_str())));
     std::string quant         = query_param(qs, "quant");
     std::string model_name    = query_param(qs, "model");
     if (quant.empty()) quant = "fp32";
