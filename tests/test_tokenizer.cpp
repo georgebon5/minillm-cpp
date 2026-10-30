@@ -327,3 +327,39 @@ TEST_CASE("decode: two tokens round-trips encode", "[tokenizer][decode]") {
     auto ids = encode(tok, text);
     REQUIRE(decode(tok, ids) == text);
 }
+
+// ── multi-turn ChatML encoding ────────────────────────────────────────────────
+// These tests verify that a pre-built multi-turn ChatML string (as the client
+// would send for conversation history) encodes with special tokens in the right
+// positions — i.e., that encode() handles interleaved special tokens and text
+// correctly at every turn boundary.
+
+TEST_CASE("encode: multi-turn ChatML has correct turn boundary token ids", "[tokenizer][chatml]") {
+    Tokenizer tok = parse_tokenizer(kSmolLM2Json);
+    // Build a two-turn ChatML sequence:
+    // <|im_start|>user\n...<|im_end|>\n<|im_start|>assistant\n...<|im_end|>\n<|im_start|>assistant\n
+    const std::string chatml =
+        "<|im_start|><|im_end|>"       // turn 1 boundaries
+        "<|im_start|><|im_end|>"       // turn 2 boundaries
+        "<|im_start|>";                // open assistant turn
+    auto ids = encode(tok, chatml);
+    REQUIRE(ids.size() == 5);
+    // All must be special token ids in the correct order.
+    REQUIRE(ids[0] == tok.im_start_id);  // 1
+    REQUIRE(ids[1] == tok.im_end_id);    // 2
+    REQUIRE(ids[2] == tok.im_start_id);
+    REQUIRE(ids[3] == tok.im_end_id);
+    REQUIRE(ids[4] == tok.im_start_id);
+}
+
+TEST_CASE("encode: multi-turn ChatML preserves prior assistant content", "[tokenizer][chatml]") {
+    // Verify that a full ChatML assistant turn round-trips: special tokens land
+    // at the right positions regardless of what text is between them.
+    Tokenizer tok = parse_tokenizer(kSmolLM2Json);
+    const std::string seq = "<|im_start|><|im_end|><|im_start|>";
+    auto ids = encode(tok, seq);
+    REQUIRE(ids.size() == 3);
+    REQUIRE(ids[0] == tok.im_start_id);
+    REQUIRE(ids[1] == tok.im_end_id);
+    REQUIRE(ids[2] == tok.im_start_id);
+}
