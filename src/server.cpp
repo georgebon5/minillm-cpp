@@ -1137,17 +1137,18 @@ static std::string handle_info(const ServerState& st) {
     for (const auto& up : st.models) {
         const Model& m = *up;
         models.push_back({
-            {"name",       m.name},
-            {"vocab",      m.cfg.vocab_size},
-            {"layers",     m.cfg.num_hidden_layers},
-            {"hidden",     m.cfg.hidden_size},
-            {"n_heads",    m.cfg.num_attention_heads},
-            {"n_kv_heads", m.cfg.num_key_value_heads},
-            {"head_dim",   m.cfg.head_dim},
-            {"max_pos",    m.cfg.max_position_embeddings},
-            {"mem_fp32_bytes", m.mem_fp32_bytes},
-            {"mem_int8_bytes", m.mem_int8_bytes},
-            {"mem_int4_bytes", m.mem_int4_bytes},
+            {"name",             m.name},
+            {"vocab",            m.cfg.vocab_size},
+            {"layers",           m.cfg.num_hidden_layers},
+            {"hidden",           m.cfg.hidden_size},
+            {"n_heads",          m.cfg.num_attention_heads},
+            {"n_kv_heads",       m.cfg.num_key_value_heads},
+            {"head_dim",         m.cfg.head_dim},
+            {"max_pos",          m.cfg.max_position_embeddings},
+            {"mem_fp32_bytes",   m.mem_fp32_bytes},
+            {"mem_int8_bytes",   m.mem_int8_bytes},
+            {"mem_int4_bytes",   m.mem_int4_bytes},
+            {"has_chat_template", m.tok.has_chat_template()},
         });
     }
     // Backwards-compat: expose the first model's fields at top level too so the
