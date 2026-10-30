@@ -485,6 +485,11 @@ static const char* kIndexHtml = R"HTML(<!doctype html>
     <div class="field"><label>model</label>
       <select id="modelSel"></select>
     </div>
+    <div class="field" style="min-width:0;">
+      <label>prompt&nbsp;tokens</label>
+      <span id="promptTokenCount" class="mono"
+            style="font-size:.78rem;color:var(--muted);min-width:3rem;">—</span>
+    </div>
     <div class="field"><label>quant</label>
       <select id="quant">
         <option value="fp32" selected>fp32</option>
@@ -560,6 +565,28 @@ const sysPEl   = $('systemPrompt');
 const sysActiveBadge = $('sysActiveBadge');
 sysPEl.addEventListener('input', () => {
   sysActiveBadge.style.display = sysPEl.value.trim() ? 'inline' : 'none';
+});
+
+// Live token counter — debounced 300ms to avoid hammering /tokenize on every keystroke.
+let tokenCountTimer = null;
+async function updateTokenCount() {
+  const text = promptEl.value;
+  const el   = $('promptTokenCount');
+  if (!text.trim()) { el.textContent = '—'; el.style.color = 'var(--muted)'; return; }
+  try {
+    const r = await fetch('/tokenize', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({text, model: $('modelSel').value})
+    });
+    const d = await r.json();
+    el.textContent  = d.n_tokens;
+    el.style.color  = d.n_tokens > d.max_context * 0.9 ? 'var(--red)' : 'var(--fg)';
+  } catch { el.textContent = '?'; }
+}
+promptEl.addEventListener('input', () => {
+  clearTimeout(tokenCountTimer);
+  tokenCountTimer = setTimeout(updateTokenCount, 300);
 });
 
 const topPEl   = $('topP');
