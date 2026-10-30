@@ -732,6 +732,28 @@ function renderModelStats(m) {
   }
   badge.style.display = isInstruct ? 'inline' : 'none';
   $('sysDetails').open = isInstruct;
+
+  // If FP32 was freed (--quant flag), lock the quant selector and show a badge.
+  const fq = m.forced_quant || '';
+  const qSel = $('quant');
+  if (fq) {
+    qSel.value = fq;
+    qSel.disabled = true;
+    qSel.title = 'FP32 freed at startup — only ' + fq + ' available';
+  } else {
+    qSel.disabled = false;
+    qSel.title = '';
+  }
+  let fqBadge = $('forcedQuantBadge');
+  if (!fqBadge) {
+    fqBadge = document.createElement('span');
+    fqBadge.id = 'forcedQuantBadge';
+    fqBadge.style.cssText = 'margin-left:.4rem;background:rgba(251,191,36,.12);color:#fbbf24;' +
+                            'border-radius:3px;padding:1px 6px;font-size:.72rem;font-family:var(--mono);';
+    qSel.insertAdjacentElement('afterend', fqBadge);
+  }
+  fqBadge.textContent = fq ? 'locked ' + fq : '';
+  fqBadge.style.display = fq ? 'inline' : 'none';
 }
 
 async function loadInfo() {
@@ -1153,8 +1175,9 @@ struct Model {
     ModelWeights w_fp32;
     ModelWeights w_int8;
     ModelWeights w_int4;
-    bool         int8_ready = false;
-    bool         int4_ready = false;
+    bool         int8_ready  = false;
+    bool         int4_ready  = false;
+    std::string  forced_quant;  // non-empty if FP32 was freed after quantization
     RopeCache    rope;
     Tokenizer    tok;
 
@@ -1181,7 +1204,10 @@ struct ServerState {
 };
 
 static const ModelWeights& ensure_weights(Model& m, const std::string& quant) {
-    if (quant == "int8") {
+    // If FP32 was freed after startup quantization, redirect all requests to
+    // the forced quant level (FP32 is gone — can't quantize on demand anymore).
+    const std::string& eff = m.forced_quant.empty() ? quant : m.forced_quant;
+    if (eff == "int8") {
         if (!m.int8_ready) {
             std::cerr << "Quantizing " << m.name << " to INT8 (one-time)...\n";
             m.w_int8     = quantize_weights(m.w_fp32, DType::I8);
@@ -1189,7 +1215,7 @@ static const ModelWeights& ensure_weights(Model& m, const std::string& quant) {
         }
         return m.w_int8;
     }
-    if (quant == "int4") {
+    if (eff == "int4") {
         if (!m.int4_ready) {
             std::cerr << "Quantizing " << m.name << " to INT4 (one-time)...\n";
             m.w_int4     = quantize_weights(m.w_fp32, DType::I4);
@@ -1398,6 +1424,7 @@ static std::string handle_info(const ServerState& st) {
             {"mem_int8_bytes",   m.mem_int8_bytes},
             {"mem_int4_bytes",   m.mem_int4_bytes},
             {"has_chat_template", m.tok.has_chat_template()},
+            {"forced_quant",     m.forced_quant},
         });
     }
     // Backwards-compat: expose the first model's fields at top level too so the
@@ -1820,19 +1847,21 @@ static std::unique_ptr<Model> load_model(const fs::path& dir) {
 
 int main(int argc, char** argv) {
     std::vector<std::string> model_dirs;
-    int port = 8080;
+    int         port         = 8080;
+    std::string startup_quant;  // if set, quantize on load and free FP32
     for (int i = 1; i < argc; ++i) {
         if      (std::strcmp(argv[i], "--help")  == 0) {
             std::cerr << "Usage: " << argv[0]
-                      << " --model <dir> [--model <dir>] ... [--port 8080]\n";
+                      << " --model <dir> [--model <dir>] ... [--port 8080] [--quant int8|int4]\n";
             return 0;
         }
         else if (std::strcmp(argv[i], "--model") == 0 && i+1 < argc) model_dirs.push_back(argv[++i]);
         else if (std::strcmp(argv[i], "--port")  == 0 && i+1 < argc) port = std::atoi(argv[++i]);
+        else if (std::strcmp(argv[i], "--quant") == 0 && i+1 < argc) startup_quant = argv[++i];
     }
     if (model_dirs.empty()) {
         std::cerr << "Usage: " << argv[0]
-                  << " --model <dir> [--model <dir>] ... [--port 8080]\n";
+                  << " --model <dir> [--model <dir>] ... [--port 8080] [--quant int8|int4]\n";
         return 1;
     }
 
@@ -1840,6 +1869,18 @@ int main(int argc, char** argv) {
     for (const auto& d : model_dirs) {
         auto m = load_model(fs::path(d));
         if (!m) return 1;
+        // Pre-quantize and free FP32 if --quant was requested.
+        // This halves (int8) or quarters (int4) the RAM footprint after loading.
+        if (startup_quant == "int8" || startup_quant == "int4") {
+            DType dt = (startup_quant == "int8") ? DType::I8 : DType::I4;
+            std::cerr << "Pre-quantizing " << m->name << " to " << startup_quant
+                      << " — FP32 weights will be freed to save RAM...\n";
+            if (dt == DType::I8) { m->w_int8 = quantize_weights(m->w_fp32, DType::I8); m->int8_ready = true; }
+            else                 { m->w_int4 = quantize_weights(m->w_fp32, DType::I4); m->int4_ready = true; }
+            m->w_fp32        = ModelWeights{};  // free ~2× the quantized size
+            m->forced_quant  = startup_quant;
+            std::cerr << "  FP32 weights freed. Active quant: " << startup_quant << "\n";
+        }
         st.by_name[m->name] = m.get();
         st.models.push_back(std::move(m));
     }
