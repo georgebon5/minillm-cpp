@@ -1172,6 +1172,15 @@ static GenResult run_generate(Model& m, const ModelWeights& w,
                                const std::string& system_prompt = "") {
     const std::string full_prompt = apply_chat_template(m.tok, prompt, system_prompt);
     auto prompt_ids = encode(m.tok, full_prompt);
+
+    // Clamp max_tokens so prompt + generation fits within the model's context window.
+    const int max_ctx = m.cfg.max_position_embeddings;
+    const int prompt_len = static_cast<int>(prompt_ids.size());
+    if (prompt_len >= max_ctx) {
+        return {"[prompt exceeds model context window]", 0, 0, 0};
+    }
+    max_tokens = std::min(max_tokens, max_ctx - prompt_len);
+
     auto t0 = clk::now();
     auto ids = generate(w, m.cfg, m.rope, prompt_ids, max_tokens, m.tok.eos_id, sampling);
     int ms = static_cast<int>(std::chrono::duration<double, std::milli>(clk::now() - t0).count());
@@ -1331,6 +1340,15 @@ static void handle_stream(ServerState& st, int sock, const std::string& qs) {
         emit("done", R"({"n_tokens":0,"ms":0,"tok_per_sec":0})");
         return;
     }
+
+    // Clamp to context window.
+    const int max_ctx    = m.cfg.max_position_embeddings;
+    const int prompt_len = static_cast<int>(prompt_ids.size());
+    if (prompt_len >= max_ctx) {
+        emit("error", R"({"message":"prompt exceeds model context window"})");
+        return;
+    }
+    max_tokens = std::min(max_tokens, max_ctx - prompt_len);
 
     KVCache kv = make_kvcache(m.cfg);
     Tensor logits;
