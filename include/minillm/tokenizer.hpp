@@ -26,6 +26,10 @@ struct Tokenizer {
     int32_t im_start_id = -1;  // <|im_start|> for ChatML templates (-1 = absent)
     int32_t im_end_id   = -1;  // <|im_end|>   for ChatML templates (-1 = absent)
 
+    // Sorted (longest-first) list of special tokens for encode() splitting.
+    // Built once at parse time so encode() never rebuilds it per call.
+    std::vector<std::pair<std::string, int32_t>> special_tokens;
+
     bool has_chat_template() const { return im_start_id >= 0 && im_end_id >= 0; }
 
     int32_t vocab_size() const { return static_cast<int32_t>(id_to_token.size()); }

@@ -65,6 +65,14 @@ Tokenizer parse_tokenizer(std::string_view json_text) {
         }
     }
 
+    // Build sorted special-token list once for encode() to use.
+    for (const auto& [s, id] : tok.token_to_id) {
+        if (s.size() >= 2 && s.front() == '<' && s.back() == '>')
+            tok.special_tokens.push_back({s, id});
+    }
+    std::sort(tok.special_tokens.begin(), tok.special_tokens.end(),
+              [](const auto& a, const auto& b){ return a.first.size() > b.first.size(); });
+
     return tok;
 }
 
@@ -264,30 +272,15 @@ static void encode_segment(const Tokenizer& tok, std::string_view seg,
 }
 
 std::vector<int32_t> encode(const Tokenizer& tok, std::string_view text) {
-    // Build a sorted list of special tokens (longest first) so we can split
-    // the input on them and insert their IDs directly, bypassing BPE.
-    // This is required for ChatML tokens like <|im_start|> which are never
-    // produced by the byte-level merge table.
-    static const auto special_ids = [](const Tokenizer& t) {
-        // Collect tokens marked as special (IDs stored directly in token_to_id
-        // but not reachable via normal BPE because they contain raw angle brackets).
-        std::vector<std::pair<std::string, int32_t>> v;
-        for (const auto& [s, id] : t.token_to_id) {
-            if (s.size() >= 2 && s.front() == '<' && s.back() == '>')
-                v.push_back({s, id});
-        }
-        // Longest first to avoid matching a prefix of a longer token.
-        std::sort(v.begin(), v.end(),
-                  [](const auto& a, const auto& b){ return a.first.size() > b.first.size(); });
-        return v;
-    }(tok);
+    // tok.special_tokens is pre-sorted longest-first at parse time.
+    // Split on special tokens and insert their IDs directly, bypassing BPE.
+    const auto& specials = tok.special_tokens;
 
     std::vector<int32_t> ids;
     size_t pos = 0;
     while (pos < text.size()) {
-        // Try to match a special token at current position.
         bool matched = false;
-        for (const auto& [s, id] : special_ids) {
+        for (const auto& [s, id] : specials) {
             if (text.substr(pos, s.size()) == s) {
                 ids.push_back(id);
                 pos += s.size();
@@ -297,9 +290,8 @@ std::vector<int32_t> encode(const Tokenizer& tok, std::string_view text) {
         }
         if (matched) continue;
 
-        // Find the next special token boundary and BPE-encode everything up to it.
         size_t next = text.size();
-        for (const auto& [s, id] : special_ids) {
+        for (const auto& [s, id] : specials) {
             size_t f = text.find(s, pos);
             if (f != std::string_view::npos && f < next) next = f;
         }
