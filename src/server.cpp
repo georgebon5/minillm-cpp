@@ -953,6 +953,7 @@ struct Model {
 struct ServerState {
     std::vector<std::unique_ptr<Model>> models;
     std::unordered_map<std::string, Model*> by_name;
+    clk::time_point start_time = clk::now();
 
     Model& pick(const std::string& name) {
         if (!name.empty()) {
@@ -1434,6 +1435,12 @@ static void dispatch(ServerState& st, int sock, const std::string& raw) {
         return send_all(sock, http_response(200, "text/html; charset=utf-8", kIndexHtml));
     if (method == "GET" && path == "/info")
         return send_all(sock, handle_info(st));
+    if (method == "GET" && path == "/health") {
+        auto uptime = std::chrono::duration_cast<std::chrono::seconds>(
+                          clk::now() - st.start_time).count();
+        json h = {{"status","ok"},{"uptime_s", uptime},{"models", (int)st.models.size()}};
+        return send_all(sock, http_response(200, "application/json", h.dump()));
+    }
     if (method == "GET" && path == "/stream")
         return handle_stream(st, sock, query);
 
