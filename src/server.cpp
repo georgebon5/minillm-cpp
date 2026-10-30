@@ -521,6 +521,11 @@ static const char* kIndexHtml = R"HTML(<!doctype html>
              border-radius:4px;padding:2px 8px;font-size:.75rem;cursor:pointer;font-family:var(--mono);">
       copy
     </button>
+    <button id="clearBtn" title="Clear output" onclick="clearOutput()"
+      style="margin-left:.4rem;background:none;border:1px solid var(--border);color:var(--muted);
+             border-radius:4px;padding:2px 8px;font-size:.75rem;cursor:pointer;font-family:var(--mono);">
+      clear
+    </button>
   </div>
   <div class="output" id="out"><span class="placeholder">Output will appear here.</span></div>
 
@@ -836,6 +841,16 @@ async function compareAll() {
   } finally {
     compareBtn.disabled = false; goBtn.disabled = false;
   }
+}
+
+// ── clear output panel ───────────────────────────────────────────────────────
+function clearOutput() {
+  if (activeStream) { activeStream.close(); activeStream = null; }
+  outEl.innerHTML = '<span class="placeholder">Output will appear here.</span>';
+  $('statN').textContent  = '0';
+  $('statMs').textContent = '0ms';
+  $('statTps').textContent = '0 tok/s';
+  tpsHistory = []; spark.innerHTML = '';
 }
 
 // ── copy output to clipboard ─────────────────────────────────────────────────
