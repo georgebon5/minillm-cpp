@@ -999,6 +999,13 @@ promptEl.addEventListener('keydown', (e) => {
 });
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') stopStream();
+  // '/' focuses the prompt unless user is already typing in an input/textarea
+  if (e.key === '/' && document.activeElement.tagName !== 'INPUT'
+                    && document.activeElement.tagName !== 'TEXTAREA') {
+    e.preventDefault();
+    promptEl.focus();
+    promptEl.setSelectionRange(promptEl.value.length, promptEl.value.length);
+  }
 });
 
 loadInfo();
