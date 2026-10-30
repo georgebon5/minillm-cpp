@@ -1073,10 +1073,27 @@ struct GenResult {
     int         tok_per_sec;
 };
 
+// Wrap a raw user prompt in ChatML format for Instruct models.
+// If the tokenizer doesn't have im_start/im_end, returns the prompt unchanged.
+static std::string apply_chat_template(const Tokenizer& tok,
+                                        const std::string& user_prompt,
+                                        const std::string& system_prompt = "") {
+    if (!tok.has_chat_template()) return user_prompt;
+    std::string out;
+    if (!system_prompt.empty()) {
+        out += "<|im_start|>system\n" + system_prompt + "<|im_end|>\n";
+    }
+    out += "<|im_start|>user\n" + user_prompt + "<|im_end|>\n";
+    out += "<|im_start|>assistant\n";
+    return out;
+}
+
 static GenResult run_generate(Model& m, const ModelWeights& w,
                                const std::string& prompt, int max_tokens,
-                               const SamplingParams& sampling) {
-    auto prompt_ids = encode(m.tok, prompt);
+                               const SamplingParams& sampling,
+                               const std::string& system_prompt = "") {
+    const std::string full_prompt = apply_chat_template(m.tok, prompt, system_prompt);
+    auto prompt_ids = encode(m.tok, full_prompt);
     auto t0 = clk::now();
     auto ids = generate(w, m.cfg, m.rope, prompt_ids, max_tokens, m.tok.eos_id, sampling);
     int ms = static_cast<int>(std::chrono::duration<double, std::milli>(clk::now() - t0).count());
@@ -1143,16 +1160,17 @@ static std::string handle_generate(ServerState& st, const std::string& body) {
         return http_response(400, "application/json",
                              json{{"error", std::string("bad json: ") + e.what()}}.dump());
     }
-    std::string prompt     = req.value("prompt", "");
-    int         max_tokens = std::max(1, std::min(256, req.value("max_tokens", 48)));
-    std::string quant      = req.value("quant", "fp32");
-    std::string model_name = req.value("model", "");
+    std::string prompt        = req.value("prompt", "");
+    std::string system_prompt = req.value("system_prompt", "");
+    int         max_tokens    = std::max(1, std::min(256, req.value("max_tokens", 48)));
+    std::string quant         = req.value("quant", "fp32");
+    std::string model_name    = req.value("model", "");
     if (prompt.empty())
         return http_response(400, "application/json", R"({"error":"empty prompt"})");
 
     Model& m = st.pick(model_name);
     const ModelWeights& w = ensure_weights(m, quant);
-    auto r = run_generate(m, w, prompt, max_tokens, parse_sampling(req));
+    auto r = run_generate(m, w, prompt, max_tokens, parse_sampling(req), system_prompt);
     json j = {{"prompt",prompt},{"generated",r.generated},{"n_tokens",r.n_tokens},
               {"ms",r.ms},{"tok_per_sec",r.tok_per_sec}};
     return http_response(200, "application/json", safe_dump(j));
@@ -1188,10 +1206,11 @@ static std::string handle_compare(ServerState& st, const std::string& body) {
 
 // SSE: inline the generate loop so we can push one token at a time.
 static void handle_stream(ServerState& st, int sock, const std::string& qs) {
-    std::string prompt     = query_param(qs, "prompt");
-    int         max_tokens = std::max(1, std::min(256, std::atoi(query_param(qs, "max_tokens").c_str())));
-    std::string quant      = query_param(qs, "quant");
-    std::string model_name = query_param(qs, "model");
+    std::string prompt        = query_param(qs, "prompt");
+    std::string system_prompt = query_param(qs, "system_prompt");
+    int         max_tokens    = std::max(1, std::min(256, std::atoi(query_param(qs, "max_tokens").c_str())));
+    std::string quant         = query_param(qs, "quant");
+    std::string model_name    = query_param(qs, "model");
     if (quant.empty()) quant = "fp32";
     Model& m = st.pick(model_name);
 
@@ -1225,7 +1244,8 @@ static void handle_stream(ServerState& st, int sock, const std::string& qs) {
 
     const ModelWeights& w = ensure_weights(m, quant);
 
-    auto prompt_ids = encode(m.tok, prompt);
+    const std::string full_prompt = apply_chat_template(m.tok, prompt, system_prompt);
+    auto prompt_ids = encode(m.tok, full_prompt);
     if (prompt_ids.empty()) {
         emit("done", R"({"n_tokens":0,"ms":0,"tok_per_sec":0})");
         return;
