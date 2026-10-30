@@ -44,6 +44,8 @@ The transformer stack is standard: RMSNorm → GQA → RoPE → SwiGLU MLP, with
 
 **Server** — Single-binary HTTP server over raw POSIX sockets, no external HTTP library. SSE for live token streaming. The UTF-8 handling was annoying: byte-level BPE can split a multi-byte character across tokens, so the SSE path buffers incomplete codepoints and only flushes whole characters.
 
+**Chat template** — The tokenizer detects `<|im_start|>` / `<|im_end|>` special tokens at parse time and builds a sorted split list so `encode()` can insert them directly by ID, bypassing byte-level BPE. The server wraps prompts in ChatML automatically for Instruct models and is a no-op for base models. Special tokens are stripped from `decode()` output so they never surface in the UI.
+
 ## Performance (Apple M2, SmolLM2-135M, Release build)
 
 | Operation | Debug (ASan) | Release (NEON) |
@@ -79,17 +81,23 @@ Prerequisites: CMake ≥ 3.20, C++20 compiler (clang 14+ or gcc 11+). Python onl
 
 ```bash
 pip install -r tools/requirements.txt
-python tools/download_model.py                              # 135M, ~270 MB
-MODEL_ID=HuggingFaceTB/SmolLM2-360M \
-    python tools/download_model.py --out models/SmolLM2-360M  # 360M, ~720 MB
+
+# Base models (text completion)
+python tools/download_model.py --size 135M          # ~270 MB
+python tools/download_model.py --size 360M          # ~720 MB
+
+# Instruct models (instruction following, chat)
+python tools/download_model.py --size 360M --instruct   # ~720 MB, recommended
 ```
 
-The 360M model is noticeably more coherent. The 135M is faster and useful for testing.
+The `--instruct` flag downloads the RLHF fine-tuned variant. The server auto-detects it from `tokenizer_config.json` and applies the ChatML template (`<|im_start|>user … <|im_end|>`) automatically — no changes needed at the call site.
+
+The 360M-Instruct is the sweet spot: fits in 8 GB RAM, runs at ~20 tok/s, gives coherent answers.
 
 ## Run
 
 ```bash
-# CLI generation
+# CLI generation (base model, text completion)
 ./build/minillm-generate \
     --model models/SmolLM2-360M \
     --prompt "Attention mechanisms work by"
@@ -100,11 +108,16 @@ The 360M model is noticeably more coherent. The 135M is faster and useful for te
     --text "In machine learning, large language models..." \
     --compare
 
-# Web UI
+# Web UI — base model
 ./build/minillm-serve --model models/SmolLM2-360M
+
+# Web UI — Instruct model (chat template applied automatically)
+./build/minillm-serve --model models/SmolLM2-360M-Instruct
 ```
 
-The server does a RAM check before loading — it estimates the F32 footprint from the on-disk BF16 size and aborts if loading would push past 75% of physical memory. Learned this the hard way after the 1.7B model turned a 16 GB machine into a page-swap nightmare.
+The server does a RAM check before loading — it estimates the F32 footprint from the on-disk BF16 size and aborts if loading would push past 75% of physical memory. Learned this the hard way after the 1.7B model turned an 8 GB machine into a page-swap nightmare.
+
+`GET /health` returns `{"status":"ok","uptime_s":…,"models":…}` if you want a liveness check.
 
 ## Test
 
@@ -119,7 +132,7 @@ python tools/gen_tokenizer_refs.py
 ctest --test-dir build
 ```
 
-97 test cases across ops, tensor, quantization, tokenizer, loader, and full forward pass.
+110 test cases across ops, tensor, quantization, tokenizer (including ChatML integration), loader, and full forward pass.
 
 ## Structure
 
