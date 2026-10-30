@@ -515,7 +515,7 @@ static const char* kIndexHtml = R"HTML(<!doctype html>
 
   <div class="controls">
     <div class="field"><label>tokens</label>
-      <input id="maxTokens" type="number" value="512" min="1" max="2048">
+      <input id="maxTokens" type="number" value="200" min="1" max="2048">
     </div>
     <div class="field"><label>model</label>
       <select id="modelSel"></select>
@@ -754,6 +754,10 @@ function renderModelStats(m) {
   }
   fqBadge.textContent = fq ? 'locked ' + fq : '';
   fqBadge.style.display = fq ? 'inline' : 'none';
+
+  // Adjust default max_tokens based on model size: bigger model → more tokens.
+  const layers = m.layers || 30;
+  $('maxTokens').value = layers >= 36 ? 512 : 200;
 }
 
 async function loadInfo() {
