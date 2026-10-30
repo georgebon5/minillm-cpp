@@ -1,6 +1,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/catch_approx.hpp>
 #include "minillm/model_config.hpp"
+#include <algorithm>
 
 using namespace minillm;
 
@@ -52,6 +53,42 @@ TEST_CASE("parse_config: bad head divisibility throws", "[config]") {
         "bos_token_id":1,"eos_token_id":2
     })";
     REQUIRE_THROWS_AS(parse_config(bad), std::runtime_error);
+}
+
+// ── context window validation helpers ────────────────────────────────────────
+// These mirror the clamping logic in server.cpp run_generate() / handle_stream().
+
+static int available_tokens(const ModelConfig& cfg, int prompt_len) {
+    return cfg.max_position_embeddings - prompt_len;
+}
+
+TEST_CASE("context window: available tokens = max_pos - prompt_len", "[config][context]") {
+    auto c = parse_config(SMOLLM2_JSON);  // max_position_embeddings = 2048
+    REQUIRE(available_tokens(c, 0)    == 2048);
+    REQUIRE(available_tokens(c, 100)  == 1948);
+    REQUIRE(available_tokens(c, 2047) == 1);
+    REQUIRE(available_tokens(c, 2048) == 0);
+}
+
+TEST_CASE("context window: prompt at limit leaves zero tokens for generation", "[config][context]") {
+    auto c = parse_config(SMOLLM2_JSON);
+    REQUIRE(available_tokens(c, c.max_position_embeddings) == 0);
+}
+
+TEST_CASE("context window: clamped max_tokens never exceeds available", "[config][context]") {
+    auto c = parse_config(SMOLLM2_JSON);
+    const int prompt_len = 1900;
+    const int requested  = 256;
+    const int clamped    = std::min(requested, available_tokens(c, prompt_len));
+    REQUIRE(clamped == 148);  // 2048 - 1900 = 148 < 256
+}
+
+TEST_CASE("context window: short prompt keeps full max_tokens budget", "[config][context]") {
+    auto c = parse_config(SMOLLM2_JSON);
+    const int prompt_len = 10;
+    const int requested  = 256;
+    const int clamped    = std::min(requested, available_tokens(c, prompt_len));
+    REQUIRE(clamped == 256);  // 2048 - 10 = 2038 > 256, so unclamped
 }
 
 TEST_CASE("parse_config: bad hidden/head divisibility throws", "[config]") {
