@@ -147,6 +147,76 @@ TEST_CASE("encode: SmolLM2 tokenizer non-empty output", "[tokenizer][integration
         REQUIRE(id < tok.vocab_size());
 }
 
+// ── EOS / ChatML special-token detection ─────────────────────────────────────
+
+static const std::string kSmolLM2Json = R"({
+  "model": {
+    "type": "BPE",
+    "vocab": {
+      "<|endoftext|>": 0,
+      "<|im_start|>":  1,
+      "<|im_end|>":    2,
+      "hello":         3
+    },
+    "merges": []
+  },
+  "added_tokens": [
+    {"id": 0, "content": "<|endoftext|>", "special": true},
+    {"id": 1, "content": "<|im_start|>",  "special": true},
+    {"id": 2, "content": "<|im_end|>",    "special": true}
+  ]
+})";
+
+TEST_CASE("parse_tokenizer: endoftext mapped to eos_id", "[tokenizer][special]") {
+    Tokenizer tok = parse_tokenizer(kSmolLM2Json);
+    REQUIRE(tok.eos_id == 0);
+}
+
+TEST_CASE("parse_tokenizer: im_start_id and im_end_id detected", "[tokenizer][special]") {
+    Tokenizer tok = parse_tokenizer(kSmolLM2Json);
+    REQUIRE(tok.im_start_id == 1);
+    REQUIRE(tok.im_end_id   == 2);
+}
+
+TEST_CASE("parse_tokenizer: has_chat_template true when both im tokens present", "[tokenizer][special]") {
+    Tokenizer tok = parse_tokenizer(kSmolLM2Json);
+    REQUIRE(tok.has_chat_template());
+}
+
+TEST_CASE("parse_tokenizer: has_chat_template false for base vocab", "[tokenizer][special]") {
+    Tokenizer tok = parse_tokenizer(kMinimalJson);  // only <unk>/<s>/</s>
+    REQUIRE_FALSE(tok.has_chat_template());
+}
+
+TEST_CASE("encode: special tokens inserted directly without BPE", "[tokenizer][special]") {
+    Tokenizer tok = parse_tokenizer(kSmolLM2Json);
+    // <|im_start|> must become id=1 directly, not go through byte-level BPE
+    auto ids = encode(tok, "<|im_start|>");
+    REQUIRE(ids == std::vector<int32_t>{1});
+}
+
+TEST_CASE("encode: im_end token gets correct id", "[tokenizer][special]") {
+    Tokenizer tok = parse_tokenizer(kSmolLM2Json);
+    auto ids = encode(tok, "<|im_end|>");
+    REQUIRE(ids == std::vector<int32_t>{2});
+}
+
+TEST_CASE("encode: ChatML sequence preserves special token ids", "[tokenizer][special]") {
+    // Simulate the ChatML wrapper: <|im_start|>user\n…<|im_end|>\n<|im_start|>assistant\n
+    // The fixture has no BPE merges for "user" etc, but special tokens must land correctly.
+    Tokenizer tok = parse_tokenizer(kSmolLM2Json);
+    auto ids = encode(tok, "<|im_start|><|im_end|>");
+    REQUIRE(ids.size() >= 2);
+    REQUIRE(ids[0] == 1);   // <|im_start|>
+    REQUIRE(ids[1] == 2);   // <|im_end|>
+}
+
+TEST_CASE("encode: endoftext token gets correct id", "[tokenizer][special]") {
+    Tokenizer tok = parse_tokenizer(kSmolLM2Json);
+    auto ids = encode(tok, "<|endoftext|>");
+    REQUIRE(ids == std::vector<int32_t>{0});
+}
+
 // ── decode tests ──────────────────────────────────────────────────────────────
 TEST_CASE("decode: empty ids → empty string", "[tokenizer][decode]") {
     Tokenizer tok = parse_tokenizer(kEncodeJson);
