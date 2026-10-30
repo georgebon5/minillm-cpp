@@ -1250,6 +1250,7 @@ static std::string http_response(int status, const std::string& ctype,
     r += "HTTP/1.1 " + std::to_string(status) + " " + st + "\r\n";
     r += "Content-Type: " + ctype + "\r\n";
     r += "Content-Length: " + std::to_string(body.size()) + "\r\n";
+    r += "Cache-Control: no-store\r\n";
     r += "Access-Control-Allow-Origin: *\r\n";
     r += "Access-Control-Allow-Methods: GET, POST, OPTIONS\r\n";
     r += "Access-Control-Allow-Headers: Content-Type\r\n";
