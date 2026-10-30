@@ -310,6 +310,31 @@ static const char* kIndexHtml = R"HTML(<!doctype html>
   .output .tok:hover { background: rgba(124, 111, 245, 0.15); }
   .output .tok.active { background: var(--accent-dim); color: var(--accent); }
 
+  /* ── chat bubble layout ──────────────────────────────────────────────────── */
+  .output.chat-mode {
+    display: flex; flex-direction: column; gap: .75rem;
+    min-height: 240px; max-height: 600px; overflow-y: auto;
+    font-family: inherit; padding: 1rem;
+  }
+  .bubble {
+    max-width: 90%; padding: .6rem .9rem; border-radius: 10px;
+    white-space: pre-wrap; word-wrap: break-word;
+    animation: fadeIn .2s ease-out;
+    font-family: var(--mono); font-size: .88rem; line-height: 1.65;
+  }
+  .bubble.user {
+    align-self: flex-end; background: var(--accent-dim);
+    border: 1px solid rgba(124, 111, 245, 0.25); color: var(--fg);
+  }
+  .bubble.assistant {
+    align-self: flex-start; background: var(--surface-2);
+    border: 1px solid var(--border); color: var(--fg);
+  }
+  .bubble-label {
+    display: block; font-size: .68rem; text-transform: uppercase;
+    letter-spacing: .06em; color: var(--muted); margin-bottom: .3rem;
+  }
+
   /* floating tooltip with top-5 for a specific token */
   .tok-popover {
     position: fixed; z-index: 100;
@@ -635,6 +660,16 @@ for (const p of PRESETS) {
 
 let activeStream = null;
 let tpsHistory = [];
+let chatMessages = []; // [{role, content}] — multi-turn history for Instruct models
+let isInstruct = false; // set from /info, enables chat-bubble UI
+
+function buildChatML(messages, sysPrompt) {
+  let s = '';
+  if (sysPrompt) s += `<|im_start|>system\n${sysPrompt}<|im_end|>\n`;
+  for (const m of messages) s += `<|im_start|>${m.role}\n${m.content}<|im_end|>\n`;
+  s += '<|im_start|>assistant\n';
+  return s;
+}
 
 // ── model info ──────────────────────────────────────────────────────────────
 let MODELS = []; // all loaded models from /info
@@ -659,7 +694,11 @@ function renderModelStats(m) {
   $('multInt4').textContent = (m.mem_fp32_bytes/m.mem_int4_bytes).toFixed(1) + '×';
 
   // Show/hide Instruct badge and auto-open system prompt panel.
-  const isInstruct = !!m.has_chat_template;
+  isInstruct = !!m.has_chat_template;
+  // Switching models resets the conversation.
+  chatMessages = [];
+  outEl.classList.remove('chat-mode');
+  outEl.innerHTML = '<span class="placeholder">Output will appear here.</span>';
   let badge = $('instructBadge');
   if (!badge) {
     badge = document.createElement('span');
@@ -730,19 +769,61 @@ function streamGenerate() {
   $('statTps').textContent = '0 tok/s';
   $('statQ').textContent  = quant;
 
-  outEl.innerHTML = '<span class="prompt-txt"></span><span class="gen"></span><span class="caret"></span>';
-  outEl.querySelector('.prompt-txt').textContent = prompt;
-  const genSpan = outEl.querySelector('.gen');
-
-  const temperature = parseFloat(tempEl.value);
-  const top_p       = parseFloat(topPEl.value);
-  const rep_penalty = parseFloat(repEl.value);
+  const temperature   = parseFloat(tempEl.value);
+  const top_p         = parseFloat(topPEl.value);
+  const rep_penalty   = parseFloat(repEl.value);
   const model         = $('modelSel').value;
   const system_prompt = sysPEl.value.trim();
-  const url = `/stream?prompt=${encodeURIComponent(prompt)}&max_tokens=${max_tokens}` +
+
+  let promptToSend, genSpan, activeCaret;
+
+  if (isInstruct) {
+    // ── Chat mode: bubble layout ──
+    outEl.classList.add('chat-mode');
+
+    // User bubble
+    chatMessages.push({role: 'user', content: prompt});
+    const userBubble = document.createElement('div');
+    userBubble.className = 'bubble user';
+    const ul = document.createElement('span'); ul.className = 'bubble-label'; ul.textContent = 'you';
+    userBubble.appendChild(ul);
+    const ut = document.createElement('span'); ut.textContent = prompt;
+    userBubble.appendChild(ut);
+    outEl.appendChild(userBubble);
+
+    // Assistant bubble (will stream into genSpan)
+    const asBubble = document.createElement('div');
+    asBubble.className = 'bubble assistant';
+    const al = document.createElement('span'); al.className = 'bubble-label'; al.textContent = 'assistant';
+    asBubble.appendChild(al);
+    genSpan = document.createElement('span'); genSpan.className = 'gen';
+    asBubble.appendChild(genSpan);
+    activeCaret = document.createElement('span'); activeCaret.className = 'caret';
+    asBubble.appendChild(activeCaret);
+    outEl.appendChild(asBubble);
+    outEl.scrollTop = outEl.scrollHeight;
+
+    // Build full ChatML — server bypasses apply_chat_template since it starts with <|im_start|>
+    promptToSend = buildChatML(chatMessages, system_prompt);
+
+    // Clear textarea for the next user message
+    promptEl.value = '';
+    autoResize(promptEl);
+    $('promptTokenCount').textContent = '—';
+  } else {
+    // ── Base model: single-turn layout ──
+    outEl.classList.remove('chat-mode');
+    outEl.innerHTML = '<span class="prompt-txt"></span><span class="gen"></span><span class="caret"></span>';
+    outEl.querySelector('.prompt-txt').textContent = prompt;
+    genSpan = outEl.querySelector('.gen');
+    activeCaret = outEl.querySelector('.caret');
+    promptToSend = prompt;
+  }
+
+  const url = `/stream?prompt=${encodeURIComponent(promptToSend)}&max_tokens=${max_tokens}` +
               `&quant=${quant}&model=${encodeURIComponent(model)}` +
               `&temperature=${temperature}&top_p=${top_p}&rep_penalty=${rep_penalty}` +
-              (system_prompt ? `&system_prompt=${encodeURIComponent(system_prompt)}` : '');
+              (!isInstruct && system_prompt ? `&system_prompt=${encodeURIComponent(system_prompt)}` : '');
   const es  = new EventSource(url);
   activeStream = es;
 
@@ -761,6 +842,7 @@ function streamGenerate() {
     span.dataset.topk = JSON.stringify(d.topk || []);
     attachPopover(span);
     genSpan.appendChild(span);
+    if (isInstruct) outEl.scrollTop = outEl.scrollHeight;
     setTimeout(() => span.classList.remove('tok-flash'), 500);
 
     $('outputHint').style.display = 'block';
@@ -775,7 +857,12 @@ function streamGenerate() {
 
   es.addEventListener('done', (e) => {
     const d = JSON.parse(e.data);
-    outEl.querySelector('.caret')?.remove();
+    activeCaret?.remove();
+    if (isInstruct) {
+      chatMessages.push({role: 'assistant', content: genSpan.textContent});
+      outEl.scrollTop = outEl.scrollHeight;
+      promptEl.focus();
+    }
     $('statN').textContent  = d.n_tokens;
     $('statMs').textContent = d.ms + 'ms';
     $('statTps').textContent = d.tok_per_sec + ' tok/s';
@@ -783,7 +870,7 @@ function streamGenerate() {
   });
 
   es.onerror = () => {
-    outEl.querySelector('.caret')?.remove();
+    activeCaret?.remove();
     $('statMs').textContent = 'connection lost';
     es.close(); activeStream = null; goBtn.disabled = false;
   };
@@ -791,7 +878,7 @@ function streamGenerate() {
 
 function stopStream() {
   if (activeStream) { activeStream.close(); activeStream = null; }
-  outEl.querySelector('.caret')?.remove();
+  document.querySelector('.caret')?.remove();
   goBtn.disabled = false;
 }
 
@@ -884,6 +971,8 @@ async function compareAll() {
 // ── clear output panel ───────────────────────────────────────────────────────
 function clearOutput() {
   if (activeStream) { activeStream.close(); activeStream = null; }
+  chatMessages = [];
+  outEl.classList.remove('chat-mode');
   outEl.innerHTML = '<span class="placeholder">Output will appear here.</span>';
   $('statN').textContent  = '0';
   $('statMs').textContent = '0ms';
@@ -1197,6 +1286,8 @@ static std::string apply_chat_template(const Tokenizer& tok,
                                         const std::string& user_prompt,
                                         const std::string& system_prompt = "") {
     if (!tok.has_chat_template()) return user_prompt;
+    // Client-built multi-turn ChatML arrives pre-formatted — pass through unchanged.
+    if (user_prompt.find("<|im_start|>") != std::string::npos) return user_prompt;
     std::string out;
     if (!system_prompt.empty()) {
         out += "<|im_start|>system\n" + system_prompt + "<|im_end|>\n";
