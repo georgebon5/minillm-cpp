@@ -17,6 +17,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <fstream>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -1436,6 +1437,27 @@ static std::unique_ptr<Model> load_model(const fs::path& dir) {
     m->rope    = build_rope_cache(m->cfg.max_position_embeddings,
                                    m->cfg.head_dim, m->cfg.rope_theta);
     m->tok     = load_tokenizer((dir/"tokenizer.json").string());
+
+    // Override eos_id from generation_config.json if present.
+    // Some models (e.g. SmolLM2 base) mark their EOS differently in
+    // tokenizer.json vs. generation_config.json; the latter wins.
+    auto gen_cfg_path = dir / "generation_config.json";
+    if (fs::exists(gen_cfg_path)) {
+        std::ifstream gf(gen_cfg_path);
+        if (gf) {
+            try {
+                auto gj = json::parse(gf);
+                if (gj.contains("eos_token_id") && gj["eos_token_id"].is_number()) {
+                    int32_t cfg_eos = gj["eos_token_id"].get<int32_t>();
+                    if (cfg_eos != m->tok.eos_id) {
+                        std::cerr << "  eos_id: " << m->tok.eos_id
+                                  << " → " << cfg_eos << " (from generation_config.json)\n";
+                        m->tok.eos_id = cfg_eos;
+                    }
+                }
+            } catch (...) {}
+        }
+    }
 
     m->mem_fp32_bytes = weight_bytes(m->w_fp32);
     size_t proj_f32   = m->mem_fp32_bytes - m->w_fp32.embed.nbytes()
