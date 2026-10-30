@@ -1750,9 +1750,9 @@ static std::unique_ptr<Model> load_model(const fs::path& dir) {
             const size_t mb = 1024 * 1024, gb = 1024 * mb;
             std::cerr << "  RAM check: ~" << (estimated_f32 / mb) << " MB needed"
                       << "  (system total: " << (total_ram / gb) << " GB)\n";
-            if (estimated_f32 > total_ram * 3 / 4) {
+            if (estimated_f32 > total_ram * 17 / 20) {  // 85% threshold
                 std::cerr << "  ERROR: " << m->name << " would need ~"
-                          << (estimated_f32 / mb) << " MB — more than 75% of "
+                          << (estimated_f32 / mb) << " MB — more than 85% of "
                           << (total_ram / gb) << " GB physical RAM.\n"
                           << "  Loading will cause severe page-swapping and render the server unresponsive.\n"
                           << "  Aborting. Use a smaller model or add more RAM.\n";
