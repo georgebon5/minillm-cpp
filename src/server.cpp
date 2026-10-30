@@ -1479,6 +1479,26 @@ static std::unique_ptr<Model> load_model(const fs::path& dir) {
         }
     }
 
+    // Check tokenizer_config.json for chat_template field to confirm Instruct variant.
+    auto tok_cfg_path = dir / "tokenizer_config.json";
+    if (fs::exists(tok_cfg_path)) {
+        std::ifstream tcf(tok_cfg_path);
+        if (tcf) {
+            try {
+                auto tj = json::parse(tcf);
+                bool has_tpl = tj.contains("chat_template") && !tj["chat_template"].is_null();
+                if (has_tpl && !m->tok.has_chat_template()) {
+                    std::cerr << "  NOTE: tokenizer_config.json has chat_template but "
+                                 "tokenizer.json lacks im_start/im_end — template inactive.\n";
+                } else if (m->tok.has_chat_template()) {
+                    std::cerr << "  Chat template: active (Instruct model, ChatML format)\n";
+                } else {
+                    std::cerr << "  Chat template: none (base model)\n";
+                }
+            } catch (...) {}
+        }
+    }
+
     m->mem_fp32_bytes = weight_bytes(m->w_fp32);
     size_t proj_f32   = m->mem_fp32_bytes - m->w_fp32.embed.nbytes()
                                            - m->w_fp32.final_norm.nbytes();
