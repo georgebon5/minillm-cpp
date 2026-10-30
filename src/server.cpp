@@ -611,14 +611,19 @@ sysPEl.addEventListener('input', () => {
 // Live token counter — debounced 300ms to avoid hammering /tokenize on every keystroke.
 let tokenCountTimer = null;
 async function updateTokenCount() {
-  const text = promptEl.value;
-  const el   = $('promptTokenCount');
-  if (!text.trim()) { el.textContent = '—'; el.style.color = 'var(--muted)'; return; }
+  const rawText = promptEl.value;
+  const el      = $('promptTokenCount');
+  if (!rawText.trim()) { el.textContent = '—'; el.style.color = 'var(--muted)'; return; }
+  // In chat mode, count the full ChatML that will actually be sent (history + new message).
+  const sysP = sysPEl ? sysPEl.value.trim() : '';
+  const textToCount = (isInstruct && chatMessages.length > 0)
+    ? buildChatML([...chatMessages, {role: 'user', content: rawText}], sysP)
+    : rawText;
   try {
     const r = await fetch('/tokenize', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({text, model: $('modelSel').value})
+      body: JSON.stringify({text: textToCount, model: $('modelSel').value})
     });
     const d = await r.json();
     el.textContent  = d.n_tokens;
