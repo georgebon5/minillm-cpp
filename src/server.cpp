@@ -515,7 +515,13 @@ static const char* kIndexHtml = R"HTML(<!doctype html>
   </div>
 
   <!-- output section -->
-  <div class="section-label">Output <div class="line"></div></div>
+  <div class="section-label">Output <div class="line"></div>
+    <button id="copyBtn" title="Copy generated text" onclick="copyOutput()"
+      style="margin-left:auto;background:none;border:1px solid var(--border);color:var(--muted);
+             border-radius:4px;padding:2px 8px;font-size:.75rem;cursor:pointer;font-family:var(--mono);">
+      copy
+    </button>
+  </div>
   <div class="output" id="out"><span class="placeholder">Output will appear here.</span></div>
 
   <div class="status-bar">
@@ -830,6 +836,20 @@ async function compareAll() {
   } finally {
     compareBtn.disabled = false; goBtn.disabled = false;
   }
+}
+
+// ── copy output to clipboard ─────────────────────────────────────────────────
+function copyOutput() {
+  const genSpan = outEl.querySelector('.gen');
+  const text = genSpan ? genSpan.textContent : '';
+  if (!text.trim()) return;
+  navigator.clipboard.writeText(text).then(() => {
+    const btn = $('copyBtn');
+    const prev = btn.textContent;
+    btn.textContent = 'copied!';
+    btn.style.color = 'var(--green)';
+    setTimeout(() => { btn.textContent = prev; btn.style.color = ''; }, 1500);
+  });
 }
 
 // ── token popover: hover/click any emitted token to see top-5 ──────────────
