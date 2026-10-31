@@ -534,9 +534,9 @@ static const char* kIndexHtml = R"HTML(<!doctype html>
     </div>
     <div class="field">
       <label>temp</label>
-      <input id="temperature" type="range" min="0" max="1.5" step="0.1" value="0.8"
+      <input id="temperature" type="range" min="0" max="1.5" step="0.1" value="0.2"
              style="width:72px;accent-color:var(--accent);">
-      <span id="tempVal" class="mono" style="font-size:.78rem;color:var(--fg);min-width:1.6rem;">0.8</span>
+      <span id="tempVal" class="mono" style="font-size:.78rem;color:var(--fg);min-width:1.6rem;">0.2</span>
     </div>
     <div class="field">
       <label>top-p</label>
@@ -546,9 +546,9 @@ static const char* kIndexHtml = R"HTML(<!doctype html>
     </div>
     <div class="field">
       <label>rep</label>
-      <input id="repPenalty" type="range" min="1.0" max="1.5" step="0.05" value="1.15"
+      <input id="repPenalty" type="range" min="1.0" max="1.5" step="0.05" value="1.05"
              style="width:72px;accent-color:var(--accent);">
-      <span id="repVal" class="mono" style="font-size:.78rem;color:var(--fg);min-width:2rem;">1.15</span>
+      <span id="repVal" class="mono" style="font-size:.78rem;color:var(--fg);min-width:2rem;">1.05</span>
     </div>
     <span class="hint"><kbd>⌘⏎</kbd> run · <kbd>esc</kbd> stop</span>
     <button class="btn" id="compareBtn">Compare all</button>
