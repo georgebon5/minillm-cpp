@@ -320,7 +320,7 @@ static const char* kIndexHtml = R"HTML(<!doctype html>
     max-width: 90%; padding: .6rem .9rem; border-radius: 10px;
     white-space: pre-wrap; word-wrap: break-word;
     animation: fadeIn .2s ease-out;
-    font-family: var(--mono); font-size: .88rem; line-height: 1.65;
+    font-family: var(--sans); font-size: .92rem; line-height: 1.6;
   }
   .bubble.user {
     align-self: flex-end; background: var(--accent-dim);
@@ -461,43 +461,16 @@ static const char* kIndexHtml = R"HTML(<!doctype html>
 <main>
   <div class="hero">
     <h1>Inference playground</h1>
-    <p>Run the CPU-only inference engine and compare generation quality across quantization levels.</p>
+    <p>Chat with a local language model running entirely on your CPU.</p>
   </div>
 
-  <!-- model section -->
-  <div class="section-label">Model <div class="line"></div></div>
-  <div class="card">
-    <div class="kv-grid">
-      <div class="kv"><span class="k">vocab</span><span class="v" id="iVocab">—</span></div>
-      <div class="kv"><span class="k">layers</span><span class="v" id="iLayers">—</span></div>
-      <div class="kv"><span class="k">hidden</span><span class="v" id="iHidden">—</span></div>
-      <div class="kv"><span class="k">heads</span><span class="v" id="iHeads">—</span></div>
-      <div class="kv"><span class="k">kv-heads</span><span class="v" id="iKvHeads">—</span></div>
-      <div class="kv"><span class="k">head-dim</span><span class="v" id="iHeadDim">—</span></div>
-    </div>
-  </div>
-
-  <!-- memory section -->
-  <div class="section-label">Memory footprint <div class="line"></div></div>
-  <div class="card pad-tight">
-    <div class="mem-row">
-      <span class="label">fp32</span>
-      <div class="mem-bar"><div class="fill" id="barFp32" style="width:100%"></div></div>
-      <span class="size" id="sizeFp32">—</span>
-      <span class="mult">1×</span>
-    </div>
-    <div class="mem-row">
-      <span class="label">int8</span>
-      <div class="mem-bar"><div class="fill int8" id="barInt8" style="width:0"></div></div>
-      <span class="size" id="sizeInt8">—</span>
-      <span class="mult" id="multInt8">—</span>
-    </div>
-    <div class="mem-row">
-      <span class="label">int4</span>
-      <div class="mem-bar"><div class="fill int4" id="barInt4" style="width:0"></div></div>
-      <span class="size" id="sizeInt4">—</span>
-      <span class="mult" id="multInt4">—</span>
-    </div>
+  <!-- hidden technical elements kept for JS compatibility -->
+  <div style="display:none">
+    <span id="iVocab"></span><span id="iLayers"></span><span id="iHidden"></span>
+    <span id="iHeads"></span><span id="iKvHeads"></span><span id="iHeadDim"></span>
+    <div id="barFp32"></div><span id="sizeFp32"></span>
+    <div id="barInt8"></div><span id="sizeInt8"></span><span id="multInt8"></span>
+    <div id="barInt4"></div><span id="sizeInt4"></span><span id="multInt4"></span>
   </div>
 
   <!-- system prompt (collapsible, only useful for Instruct models) -->
@@ -509,54 +482,62 @@ static const char* kIndexHtml = R"HTML(<!doctype html>
   </details>
 
   <!-- prompt section -->
-  <div class="section-label">Prompt <div class="line"></div></div>
-  <textarea id="prompt" placeholder="enter prompt — ⌘⏎ to run (chat mode: Enter to send)">The capital of France is</textarea>
+  <div class="section-label">Your message <div class="line"></div></div>
+  <textarea id="prompt" placeholder="Type a message… (Enter to send in chat mode, ⌘⏎ otherwise)">The capital of France is</textarea>
   <div class="presets" id="presets"></div>
 
   <div class="controls">
-    <div class="field"><label>tokens</label>
-      <input id="maxTokens" type="number" value="200" min="1" max="2048">
-    </div>
-    <div class="field"><label>model</label>
+    <div class="field"><label>Model</label>
       <select id="modelSel"></select>
     </div>
-    <div class="field" style="min-width:0;">
-      <label>prompt&nbsp;tokens</label>
-      <span id="promptTokenCount" class="mono"
-            style="font-size:.78rem;color:var(--muted);min-width:3rem;">—</span>
-    </div>
-    <div class="field"><label>quant</label>
-      <select id="quant">
-        <option value="fp32" selected>fp32</option>
-        <option value="int8">int8</option>
-        <option value="int4">int4</option>
-      </select>
+    <div class="field"><label>Max length</label>
+      <input id="maxTokens" type="number" value="200" min="1" max="2048">
     </div>
     <div class="field">
-      <label>temp</label>
+      <label>Creativity</label>
       <input id="temperature" type="range" min="0" max="1.5" step="0.1" value="0.2"
              style="width:72px;accent-color:var(--accent);">
       <span id="tempVal" class="mono" style="font-size:.78rem;color:var(--fg);min-width:1.6rem;">0.2</span>
-    </div>
-    <div class="field">
-      <label>top-p</label>
-      <input id="topP" type="range" min="0.1" max="1.0" step="0.05" value="0.9"
-             style="width:72px;accent-color:var(--accent);">
-      <span id="topPVal" class="mono" style="font-size:.78rem;color:var(--fg);min-width:2rem;">0.9</span>
-    </div>
-    <div class="field">
-      <label>rep</label>
-      <input id="repPenalty" type="range" min="1.0" max="1.5" step="0.05" value="1.05"
-             style="width:72px;accent-color:var(--accent);">
-      <span id="repVal" class="mono" style="font-size:.78rem;color:var(--fg);min-width:2rem;">1.05</span>
     </div>
     <span class="hint"><kbd>⌘⏎</kbd> run · <kbd>esc</kbd> stop</span>
     <button class="btn" id="compareBtn">Compare all</button>
     <button class="btn primary" id="goBtn">Generate</button>
   </div>
 
+  <details style="margin-bottom:.75rem;">
+    <summary style="cursor:pointer;color:var(--muted);font-size:.8rem;user-select:none;padding:.25rem 0;">
+      Advanced settings
+    </summary>
+    <div class="controls" style="margin-top:.5rem;">
+      <div class="field"><label>Quant</label>
+        <select id="quant">
+          <option value="fp32" selected>fp32</option>
+          <option value="int8">int8</option>
+          <option value="int4">int4</option>
+        </select>
+      </div>
+      <div class="field">
+        <label>Top-p</label>
+        <input id="topP" type="range" min="0.1" max="1.0" step="0.05" value="0.9"
+               style="width:72px;accent-color:var(--accent);">
+        <span id="topPVal" class="mono" style="font-size:.78rem;color:var(--fg);min-width:2rem;">0.9</span>
+      </div>
+      <div class="field">
+        <label>Repeat penalty</label>
+        <input id="repPenalty" type="range" min="1.0" max="1.5" step="0.05" value="1.05"
+               style="width:72px;accent-color:var(--accent);">
+        <span id="repVal" class="mono" style="font-size:.78rem;color:var(--fg);min-width:2rem;">1.05</span>
+      </div>
+      <div class="field" style="min-width:0;">
+        <label>Prompt&nbsp;tokens</label>
+        <span id="promptTokenCount" class="mono"
+              style="font-size:.78rem;color:var(--muted);min-width:3rem;">—</span>
+      </div>
+    </div>
+  </details>
+
   <!-- output section -->
-  <div class="section-label">Output <div class="line"></div>
+  <div class="section-label">Response <div class="line"></div>
     <button id="copyBtn" title="Copy generated text" onclick="copyOutput()"
       style="margin-left:auto;background:none;border:1px solid var(--border);color:var(--muted);
              border-radius:4px;padding:2px 8px;font-size:.75rem;cursor:pointer;font-family:var(--mono);">
@@ -577,15 +558,15 @@ static const char* kIndexHtml = R"HTML(<!doctype html>
   <div class="output" id="out"><span class="placeholder">Output will appear here.</span></div>
 
   <div class="status-bar">
-    <div class="status-item"><span class="k">tokens</span><span class="v" id="statN">0</span></div>
-    <div class="status-item"><span class="k">elapsed</span><span class="v" id="statMs">0ms</span></div>
-    <div class="status-item"><span class="k">throughput</span><span class="v" id="statTps">0 tok/s</span></div>
-    <div class="status-item"><span class="k">quant</span><span class="v" id="statQ">—</span></div>
+    <div class="status-item"><span class="k">Generated</span><span class="v" id="statN">0</span><span class="k" style="margin-left:.2rem;">tokens</span></div>
+    <div class="status-item"><span class="k">Speed</span><span class="v" id="statTps">—</span></div>
+    <div class="status-item" style="display:none"><span class="v" id="statMs">0ms</span></div>
+    <div class="status-item" style="display:none"><span class="v" id="statQ">—</span></div>
     <div class="spark" id="spark"></div>
   </div>
 
   <div class="output-hint" id="outputHint" style="display:none">
-    hover any generated token to see the top-5 alternatives the model considered · click to pin
+    Hover a word to see what alternatives the model considered · click to pin
   </div>
 
   <!-- floating popover injected into body on hover/click -->
