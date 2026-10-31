@@ -1176,12 +1176,14 @@ loadInfo();
 struct Model {
     std::string  name;          // basename of the model directory, used for lookup
     ModelConfig  cfg;
-    ModelWeights w_fp32;
-    ModelWeights w_int8;
-    ModelWeights w_int4;
-    bool         int8_ready  = false;
-    bool         int4_ready  = false;
-    std::string  forced_quant;  // non-empty if FP32 was freed after quantization
+    ModelWeights  w_fp32;
+    ModelWeights  w_int8;
+    ModelWeights  w_int4;
+    bool          int8_ready     = false;
+    bool          int4_ready     = false;
+    ModelWeightsQ wq_direct_q;
+    bool          direct_q_ready = false;  // true when loaded via load_weights_q (no FP32 peak)
+    std::string   forced_quant;            // non-empty if FP32 was freed after quantization
     RopeCache    rope;
     Tokenizer    tok;
 
@@ -1238,6 +1240,18 @@ static size_t weight_bytes(const ModelWeights& w) {
         b += l.attn_norm.nbytes() + l.Wq.nbytes() + l.Wk.nbytes() + l.Wv.nbytes() +
              l.Wo.nbytes() + l.mlp_norm.nbytes() + l.W_gate.nbytes() + l.W_up.nbytes() +
              l.W_down.nbytes();
+    return b;
+}
+
+static size_t weight_bytes_q(const ModelWeightsQ& w) {
+    auto qt = [](const QuantTensor& q) -> size_t {
+        return q.data.nbytes() + q.scales.size() * sizeof(float);
+    };
+    size_t b = w.embed.nbytes() + w.final_norm.nbytes() + qt(w.lm_head);
+    for (const auto& l : w.layers)
+        b += l.attn_norm.nbytes() + l.mlp_norm.nbytes() +
+             qt(l.Wq) + qt(l.Wk) + qt(l.Wv) + qt(l.Wo) +
+             qt(l.W_gate) + qt(l.W_up) + qt(l.W_down);
     return b;
 }
 
@@ -1373,25 +1387,31 @@ static std::string apply_chat_template(const Tokenizer& tok,
     return out;
 }
 
-static GenResult run_generate(Model& m, const ModelWeights& w,
+static GenResult run_generate(Model& m, const std::string& quant,
                                const std::string& prompt, int max_tokens,
                                const SamplingParams& sampling,
                                const std::string& system_prompt = "") {
     const std::string full_prompt = apply_chat_template(m.tok, prompt, system_prompt);
     auto prompt_ids = encode(m.tok, full_prompt);
 
-    // Clamp max_tokens so prompt + generation fits within the model's context window.
     const int max_ctx = m.cfg.max_position_embeddings;
     const int prompt_len = static_cast<int>(prompt_ids.size());
-    if (prompt_len >= max_ctx) {
+    if (prompt_len >= max_ctx)
         return {"[prompt exceeds model context window]", 0, 0, 0};
-    }
     max_tokens = std::min(max_tokens, max_ctx - prompt_len);
 
     SamplingParams sp = sampling;
     if (m.tok.im_end_id >= 0) sp.stop2 = m.tok.im_end_id;
     auto t0 = clk::now();
-    auto ids = generate(w, m.cfg, m.rope, prompt_ids, max_tokens, m.tok.eos_id, sp);
+
+    std::vector<int32_t> ids;
+    if (m.direct_q_ready) {
+        ids = generate_q(m.wq_direct_q, m.cfg, m.rope, prompt_ids, max_tokens, m.tok.eos_id, sp);
+    } else {
+        const ModelWeights& w = ensure_weights(m, quant);
+        ids = generate(w, m.cfg, m.rope, prompt_ids, max_tokens, m.tok.eos_id, sp);
+    }
+
     int ms = static_cast<int>(std::chrono::duration<double, std::milli>(clk::now() - t0).count());
     double tps = ids.empty() ? 0 : static_cast<double>(ids.size()) / (ms / 1000.0);
     return { decode(m.tok, ids), static_cast<int>(ids.size()), ms, static_cast<int>(tps) };
@@ -1467,8 +1487,7 @@ static std::string handle_generate(ServerState& st, const std::string& body) {
         return http_response(400, "application/json", R"({"error":"empty prompt"})");
 
     Model& m = st.pick(model_name);
-    const ModelWeights& w = ensure_weights(m, quant);
-    auto r = run_generate(m, w, prompt, max_tokens, parse_sampling(req), system_prompt);
+    auto r = run_generate(m, quant, prompt, max_tokens, parse_sampling(req), system_prompt);
     ++st.total_requests;
     st.total_tokens += static_cast<uint64_t>(r.n_tokens);
     json j = {{"prompt",prompt},{"generated",r.generated},{"n_tokens",r.n_tokens},
@@ -1497,8 +1516,7 @@ static std::string handle_compare(ServerState& st, const std::string& body) {
 
     json result;
     for (const char* q : {"fp32", "int8", "int4"}) {
-        const ModelWeights& w = ensure_weights(m, q);
-        auto r = run_generate(m, w, prompt, max_tokens, base_sp);
+        auto r = run_generate(m, q, prompt, max_tokens, base_sp);
         result[q] = {{"generated",r.generated},{"n_tokens",r.n_tokens},
                      {"ms",r.ms},{"tok_per_sec",r.tok_per_sec}};
     }
@@ -1543,8 +1561,6 @@ static void handle_stream(ServerState& st, int sock, const std::string& qs) {
         send_all(sock, msg);
     };
 
-    const ModelWeights& w = ensure_weights(m, quant);
-
     const std::string full_prompt = apply_chat_template(m.tok, prompt, system_prompt);
     auto prompt_ids = encode(m.tok, full_prompt);
     if (prompt_ids.empty()) {
@@ -1561,10 +1577,23 @@ static void handle_stream(ServerState& st, int sock, const std::string& qs) {
     }
     max_tokens = std::min(max_tokens, max_ctx - prompt_len);
 
+    // Dispatch forward_one vs forward_one_q based on how the model was loaded.
+    std::function<Tensor(int32_t, KVCache&)> fwd;
+    if (m.direct_q_ready) {
+        fwd = [&](int32_t id, KVCache& kv_) {
+            return forward_one_q(m.wq_direct_q, m.cfg, m.rope, id, kv_);
+        };
+    } else {
+        const ModelWeights& w = ensure_weights(m, quant);
+        fwd = [&w, &m](int32_t id, KVCache& kv_) {
+            return forward_one(w, m.cfg, m.rope, id, kv_);
+        };
+    }
+
     KVCache kv = make_kvcache(m.cfg);
     Tensor logits;
     for (int32_t id : prompt_ids)
-        logits = forward_one(w, m.cfg, m.rope, id, kv);
+        logits = fwd(id, kv);
 
     std::vector<int32_t> gen_ids;
     std::string prev_text;
@@ -1673,7 +1702,7 @@ static void handle_stream(ServerState& st, int sock, const std::string& qs) {
         }
 
         if (next_id == m.tok.eos_id || next_id == m.tok.im_end_id) break;
-        logits = forward_one(w, m.cfg, m.rope, next_id, kv);
+        logits = fwd(next_id, kv);
     }
 
     // Flush any remainder (should be rare — final tokens usually complete all UTF-8).
@@ -1759,7 +1788,8 @@ static void dispatch(ServerState& st, int sock, const std::string& raw) {
 
 // ── main ─────────────────────────────────────────────────────────────────────
 
-static std::unique_ptr<Model> load_model(const fs::path& dir) {
+static std::unique_ptr<Model> load_model(const fs::path& dir,
+                                          const std::string& direct_quant = "") {
     for (const auto& p : {dir/"config.json", dir/"model.safetensors", dir/"tokenizer.json"}) {
         if (!fs::exists(p)) {
             std::cerr << "  missing: " << p << "\n";
@@ -1776,14 +1806,15 @@ static std::unique_ptr<Model> load_model(const fs::path& dir) {
         size_t rlen = sizeof(total_ram);
         sysctlbyname("hw.memsize", &total_ram, &rlen, nullptr, 0);
         size_t file_bytes    = fs::file_size(dir / "model.safetensors");
-        size_t estimated_f32 = file_bytes * 2;  // BF16 on disk → F32 in RAM
+        // Direct INT8/INT4 loading skips the FP32 intermediate; RAM ≈ file_size/2.
+        size_t estimated_ram = (!direct_quant.empty()) ? file_bytes / 2 : file_bytes * 2;
         if (total_ram > 0) {
             const size_t mb = 1024 * 1024, gb = 1024 * mb;
-            std::cerr << "  RAM check: ~" << (estimated_f32 / mb) << " MB needed"
+            std::cerr << "  RAM check: ~" << (estimated_ram / mb) << " MB needed"
                       << "  (system total: " << (total_ram / gb) << " GB)\n";
-            if (estimated_f32 > total_ram * 17 / 20) {  // 85% threshold
+            if (estimated_ram > total_ram * 17 / 20) {  // 85% threshold
                 std::cerr << "  ERROR: " << m->name << " would need ~"
-                          << (estimated_f32 / mb) << " MB — more than 85% of "
+                          << (estimated_ram / mb) << " MB — more than 85% of "
                           << (total_ram / gb) << " GB physical RAM.\n"
                           << "  Loading will cause severe page-swapping and render the server unresponsive.\n"
                           << "  Aborting. Use a smaller model or add more RAM.\n";
@@ -1792,13 +1823,23 @@ static std::unique_ptr<Model> load_model(const fs::path& dir) {
         }
     }
 
-    std::cerr << "Loading model " << m->name << " ...\n";
-    m->cfg     = load_config((dir/"config.json").string());
+    std::cerr << "Loading model " << m->name
+              << (direct_quant.empty() ? "" : " [direct " + direct_quant + "]")
+              << " ...\n";
+    m->cfg = load_config((dir/"config.json").string());
     SafetensorsFile sf((dir/"model.safetensors").string());
-    m->w_fp32  = load_weights(sf, m->cfg);
-    m->rope    = build_rope_cache(m->cfg.max_position_embeddings,
-                                   m->cfg.head_dim, m->cfg.rope_theta);
-    m->tok     = load_tokenizer((dir/"tokenizer.json").string());
+    if (!direct_quant.empty()) {
+        DType qdtype = (direct_quant == "int4") ? DType::I4 : DType::I8;
+        std::cerr << "  BF16→" << direct_quant << " direct quantization (no FP32 peak)...\n";
+        m->wq_direct_q    = load_weights_q(sf, m->cfg, qdtype);
+        m->direct_q_ready = true;
+        m->forced_quant   = direct_quant;
+    } else {
+        m->w_fp32 = load_weights(sf, m->cfg);
+    }
+    m->rope = build_rope_cache(m->cfg.max_position_embeddings,
+                               m->cfg.head_dim, m->cfg.rope_theta);
+    m->tok  = load_tokenizer((dir/"tokenizer.json").string());
 
     // Override eos_id from generation_config.json if present.
     // Some models (e.g. SmolLM2 base) mark their EOS differently in
@@ -1841,11 +1882,15 @@ static std::unique_ptr<Model> load_model(const fs::path& dir) {
         }
     }
 
-    m->mem_fp32_bytes = weight_bytes(m->w_fp32);
-    size_t proj_f32   = m->mem_fp32_bytes - m->w_fp32.embed.nbytes()
-                                           - m->w_fp32.final_norm.nbytes();
-    m->mem_int8_bytes = m->w_fp32.embed.nbytes() + m->w_fp32.final_norm.nbytes() + proj_f32 / 4;
-    m->mem_int4_bytes = m->w_fp32.embed.nbytes() + m->w_fp32.final_norm.nbytes() + proj_f32 / 8;
+    if (m->direct_q_ready) {
+        m->mem_int8_bytes = weight_bytes_q(m->wq_direct_q);
+    } else {
+        m->mem_fp32_bytes = weight_bytes(m->w_fp32);
+        size_t proj_f32   = m->mem_fp32_bytes - m->w_fp32.embed.nbytes()
+                                               - m->w_fp32.final_norm.nbytes();
+        m->mem_int8_bytes = m->w_fp32.embed.nbytes() + m->w_fp32.final_norm.nbytes() + proj_f32 / 4;
+        m->mem_int4_bytes = m->w_fp32.embed.nbytes() + m->w_fp32.final_norm.nbytes() + proj_f32 / 8;
+    }
     return m;
 }
 
@@ -1871,20 +1916,8 @@ int main(int argc, char** argv) {
 
     ServerState st;
     for (const auto& d : model_dirs) {
-        auto m = load_model(fs::path(d));
+        auto m = load_model(fs::path(d), startup_quant);
         if (!m) return 1;
-        // Pre-quantize and free FP32 if --quant was requested.
-        // This halves (int8) or quarters (int4) the RAM footprint after loading.
-        if (startup_quant == "int8" || startup_quant == "int4") {
-            DType dt = (startup_quant == "int8") ? DType::I8 : DType::I4;
-            std::cerr << "Pre-quantizing " << m->name << " to " << startup_quant
-                      << " — FP32 weights will be freed to save RAM...\n";
-            if (dt == DType::I8) { m->w_int8 = quantize_weights(m->w_fp32, DType::I8); m->int8_ready = true; }
-            else                 { m->w_int4 = quantize_weights(m->w_fp32, DType::I4); m->int4_ready = true; }
-            m->w_fp32        = ModelWeights{};  // free ~2× the quantized size
-            m->forced_quant  = startup_quant;
-            std::cerr << "  FP32 weights freed. Active quant: " << startup_quant << "\n";
-        }
         st.by_name[m->name] = m.get();
         st.models.push_back(std::move(m));
     }

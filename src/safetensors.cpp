@@ -4,7 +4,10 @@
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#include <algorithm>
+#include <cassert>
 #include <cerrno>
+#include <cmath>
 #include <cstring>
 #include <stdexcept>
 #include <string>
@@ -142,6 +145,54 @@ Tensor SafetensorsFile::tensor_f32(const std::string& name) const {
     }
 
     throw std::runtime_error("tensor_f32: unsupported dtype for tensor '" + name + "'");
+}
+
+QuantTensor SafetensorsFile::tensor_q(const std::string& name, DType qdtype) const {
+    Tensor raw = tensor(name);
+    assert(raw.ndim() == 2);
+    const size_t rows = raw.shape()[0];
+    const size_t cols = raw.shape()[1];
+    const float  qmax = (qdtype == DType::I8) ? 127.f : 7.f;
+
+    QuantTensor qt;
+    qt.data = Tensor({rows, cols}, qdtype);
+    qt.scales.resize(rows, 1.f);
+
+    std::vector<float> row(cols);
+    const auto* src_bf16 = (raw.dtype() == DType::BF16) ? raw.data_as<uint16_t>() : nullptr;
+    const auto* src_f32  = (raw.dtype() == DType::F32)  ? raw.data_as<float>()    : nullptr;
+
+    for (size_t r = 0; r < rows; ++r) {
+        // Convert one row to F32 (O(cols) temporary, never the full matrix).
+        if (src_bf16) {
+            for (size_t c = 0; c < cols; ++c)
+                row[c] = bf16_to_f32(src_bf16[r * cols + c]);
+        } else {
+            std::memcpy(row.data(), src_f32 + r * cols, cols * sizeof(float));
+        }
+
+        float max_abs = 0.f;
+        for (float v : row) max_abs = std::max(max_abs, std::abs(v));
+        if (max_abs == 0.f) continue;
+        qt.scales[r] = max_abs / qmax;
+
+        if (qdtype == DType::I8) {
+            auto* dst = reinterpret_cast<int8_t*>(qt.data.data()) + r * cols;
+            for (size_t c = 0; c < cols; ++c)
+                dst[c] = static_cast<int8_t>(std::round(row[c] / qt.scales[r]));
+        } else {
+            // INT4 nibble-packed: two values per byte
+            auto* dst = reinterpret_cast<uint8_t*>(qt.data.data()) + r * (cols / 2);
+            for (size_t c = 0; c < cols; c += 2) {
+                int lo = static_cast<int>(std::round(row[c]     / qt.scales[r]));
+                int hi = static_cast<int>(std::round(row[c + 1] / qt.scales[r]));
+                lo = std::max(-7, std::min(7, lo));
+                hi = std::max(-7, std::min(7, hi));
+                dst[c / 2] = static_cast<uint8_t>((lo & 0xF) | ((hi & 0xF) << 4));
+            }
+        }
+    }
+    return qt;
 }
 
 std::unordered_map<std::string, Tensor> SafetensorsFile::load_all_f32() const {

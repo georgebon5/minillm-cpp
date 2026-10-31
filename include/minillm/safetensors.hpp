@@ -6,6 +6,7 @@
 #include <unordered_map>
 #include <vector>
 #include "tensor.hpp"
+#include "ops.hpp"
 
 namespace minillm {
 
@@ -46,6 +47,10 @@ public:
 
     // Loads every tensor in the file as F32 into one map.
     std::unordered_map<std::string, Tensor> load_all_f32() const;
+
+    // Returns an owning QuantTensor by reading BF16/F32 directly to INT8 or INT4
+    // without creating a full FP32 intermediate. One row at a time → O(cols) peak RAM.
+    QuantTensor tensor_q(const std::string& name, DType qdtype) const;
 
     bool has(const std::string& name) const { return tensor_map_.count(name) > 0; }
 

@@ -33,6 +33,27 @@ struct ModelWeights {
 // Load all weights from a safetensors file (BF16 → F32 conversion included).
 ModelWeights load_weights(const SafetensorsFile& sf, const ModelConfig& cfg);
 
+// ── INT8 weight structs (BF16 → INT8 direct, no FP32 intermediate) ────────────
+
+struct LayerWeightsQ {
+    Tensor      attn_norm;
+    QuantTensor Wq, Wk, Wv, Wo;
+    Tensor      mlp_norm;
+    QuantTensor W_gate, W_up, W_down;
+};
+
+struct ModelWeightsQ {
+    Tensor                  embed;
+    std::vector<LayerWeightsQ> layers;
+    Tensor                  final_norm;
+    QuantTensor             lm_head;
+};
+
+// Load weights directly from BF16 to INT8 without a FP32 intermediate.
+// Peak RAM: O(one matrix row), not O(full model). Enables 1.7B on 8 GB.
+ModelWeightsQ load_weights_q(const SafetensorsFile& sf, const ModelConfig& cfg,
+                              DType qdtype = DType::I8);
+
 // Full causal forward pass (prefill — no cache).
 //   ids     : token IDs for the input sequence
 //   rope    : precomputed RoPE tables (build once, reuse)
@@ -78,6 +99,13 @@ Tensor forward_one(const ModelWeights& weights,
                    int32_t             token_id,
                    KVCache&            kv);
 
+// INT8-native decode step: same as forward_one but uses linear_q throughout.
+Tensor forward_one_q(const ModelWeightsQ& weights,
+                     const ModelConfig&   cfg,
+                     const RopeCache&     rope,
+                     int32_t              token_id,
+                     KVCache&             kv);
+
 // ── Generation loop (greedy or top-k sampling) ────────────────────────────────
 
 struct SamplingParams {
@@ -99,5 +127,14 @@ std::vector<int32_t> generate(const ModelWeights&       weights,
                                int                        max_new_tokens,
                                int32_t                    eos_id   = 2,
                                const SamplingParams&      sampling = {});
+
+// Same as generate but uses INT8-native weights (no FP32 intermediate).
+std::vector<int32_t> generate_q(const ModelWeightsQ&      weights,
+                                 const ModelConfig&         cfg,
+                                 const RopeCache&           rope,
+                                 std::span<const int32_t>   prompt_ids,
+                                 int                        max_new_tokens,
+                                 int32_t                    eos_id   = 2,
+                                 const SamplingParams&      sampling = {});
 
 } // namespace minillm

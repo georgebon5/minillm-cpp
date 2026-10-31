@@ -336,4 +336,148 @@ std::vector<int32_t> generate(const ModelWeights&       w,
     return generated;
 }
 
+// ── Direct BF16→INT8 weight loading ──────────────────────────────────────────
+
+ModelWeightsQ load_weights_q(const SafetensorsFile& sf, const ModelConfig& cfg, DType qdtype) {
+    ModelWeightsQ w;
+    w.embed = sf.tensor_f32("model.embed_tokens.weight");
+    w.layers.resize(static_cast<size_t>(cfg.num_hidden_layers));
+    for (int l = 0; l < cfg.num_hidden_layers; ++l) {
+        LayerWeightsQ& lw = w.layers[static_cast<size_t>(l)];
+        const std::string p = "model.layers." + std::to_string(l) + ".";
+        lw.attn_norm = sf.tensor_f32(p + "input_layernorm.weight");
+        lw.Wq        = sf.tensor_q(p + "self_attn.q_proj.weight",  qdtype);
+        lw.Wk        = sf.tensor_q(p + "self_attn.k_proj.weight",  qdtype);
+        lw.Wv        = sf.tensor_q(p + "self_attn.v_proj.weight",  qdtype);
+        lw.Wo        = sf.tensor_q(p + "self_attn.o_proj.weight",  qdtype);
+        lw.mlp_norm  = sf.tensor_f32(p + "post_attention_layernorm.weight");
+        lw.W_gate    = sf.tensor_q(p + "mlp.gate_proj.weight",     qdtype);
+        lw.W_up      = sf.tensor_q(p + "mlp.up_proj.weight",       qdtype);
+        lw.W_down    = sf.tensor_q(p + "mlp.down_proj.weight",     qdtype);
+    }
+    w.final_norm = sf.tensor_f32("model.norm.weight");
+    const std::string lm_name = sf.has("lm_head.weight") ? "lm_head.weight"
+                                                          : "model.embed_tokens.weight";
+    w.lm_head = sf.tensor_q(lm_name, qdtype);
+    return w;
+}
+
+// ── Quantized forward helpers (INT8/INT4 native) ──────────────────────────────
+
+static Tensor swiglu_mlp_q(const Tensor&      x,
+                             const QuantTensor& W_gate,
+                             const QuantTensor& W_up,
+                             const QuantTensor& W_down) {
+    Tensor g = linear_q(x, W_gate);
+    Tensor u = linear_q(x, W_up);
+    float*       gp = g.data_as<float>();
+    const float* up = u.data_as<float>();
+    for (size_t i = 0, n = g.numel(); i < n; ++i)
+        gp[i] = silu(gp[i]) * up[i];
+    return linear_q(g, W_down);
+}
+
+static Tensor gqa_attn_cached_q(const Tensor&      x,
+                                  const QuantTensor& Wq,
+                                  const QuantTensor& Wk,
+                                  const QuantTensor& Wv,
+                                  const QuantTensor& Wo,
+                                  const RopeCache&   rope,
+                                  KVCache::Layer&    kv_layer,
+                                  int n_heads,
+                                  int n_kv_heads,
+                                  int pos) {
+    assert(x.shape()[0] == 1);
+    const size_t head_dim  = Wq.data.shape()[0] / static_cast<size_t>(n_heads);
+    const int    kv_groups = n_heads / n_kv_heads;
+
+    Tensor Q     = linear_q(x, Wq);
+    Tensor K_new = linear_q(x, Wk);
+    Tensor V_new = linear_q(x, Wv);
+
+    rope_apply(Q,     rope, pos);
+    rope_apply(K_new, rope, pos);
+
+    kv_layer.append(K_new.data_as<float>(), V_new.data_as<float>());
+    const size_t seq = kv_layer.seq_len;
+
+    const size_t n_h = static_cast<size_t>(n_heads);
+    Tensor attn_out({1, n_h * head_dim}, DType::F32);
+    float* out_p = attn_out.data_as<float>();
+
+    for (int h = 0; h < n_heads; ++h) {
+        const size_t kv_h = static_cast<size_t>(h / kv_groups);
+        Tensor q_h = slice_cols_raw(Q.data_as<float>(), 1, n_h * head_dim,
+                                    static_cast<size_t>(h) * head_dim, head_dim);
+        Tensor k_h = slice_cols_raw(kv_layer.k.data(), seq, kv_layer.kv_dim,
+                                    kv_h * head_dim, head_dim);
+        Tensor v_h = slice_cols_raw(kv_layer.v.data(), seq, kv_layer.kv_dim,
+                                    kv_h * head_dim, head_dim);
+        Tensor out_h = scaled_dot_product_attention(q_h, k_h, v_h, false);
+        std::memcpy(out_p + static_cast<size_t>(h) * head_dim,
+                    out_h.data_as<float>(), head_dim * sizeof(float));
+    }
+    return linear_q(attn_out, Wo);
+}
+
+Tensor forward_one_q(const ModelWeightsQ& w,
+                     const ModelConfig&   cfg,
+                     const RopeCache&     rope,
+                     int32_t              token_id,
+                     KVCache&             kv) {
+    const int pos = static_cast<int>(kv.layers[0].seq_len);
+    std::array<int32_t, 1> ids_arr = {token_id};
+    Tensor x = embedding_lookup(w.embed, ids_arr);
+
+    for (int l = 0; l < cfg.num_hidden_layers; ++l) {
+        const LayerWeightsQ& lw = w.layers[static_cast<size_t>(l)];
+        Tensor normed   = rms_norm(x, lw.attn_norm, cfg.rms_norm_eps);
+        Tensor attn_out = gqa_attn_cached_q(normed,
+                                             lw.Wq, lw.Wk, lw.Wv, lw.Wo,
+                                             rope,
+                                             kv.layers[static_cast<size_t>(l)],
+                                             cfg.num_attention_heads,
+                                             cfg.num_key_value_heads,
+                                             pos);
+        add_inplace(x, attn_out);
+        normed         = rms_norm(x, lw.mlp_norm, cfg.rms_norm_eps);
+        Tensor mlp_out = swiglu_mlp_q(normed, lw.W_gate, lw.W_up, lw.W_down);
+        add_inplace(x, mlp_out);
+    }
+    x = rms_norm(x, w.final_norm, cfg.rms_norm_eps);
+    return linear_q(x, w.lm_head);
+}
+
+std::vector<int32_t> generate_q(const ModelWeightsQ&     w,
+                                  const ModelConfig&        cfg,
+                                  const RopeCache&          rope,
+                                  std::span<const int32_t>  prompt_ids,
+                                  int                       max_new_tokens,
+                                  int32_t                   eos_id,
+                                  const SamplingParams&     sampling) {
+    KVCache kv = make_kvcache(cfg);
+    Tensor logits;
+    for (int32_t id : prompt_ids)
+        logits = forward_one_q(w, cfg, rope, id, kv);
+
+    const size_t vocab = static_cast<size_t>(cfg.vocab_size);
+    std::vector<int32_t> generated;
+    generated.reserve(static_cast<size_t>(max_new_tokens));
+
+    std::mt19937 rng(sampling.seed ? sampling.seed : std::random_device{}());
+    std::vector<int32_t> history(prompt_ids.begin(), prompt_ids.end());
+    std::vector<float>   scratch;
+    scratch.reserve(vocab);
+
+    for (int step = 0; step < max_new_tokens; ++step) {
+        int32_t next_id = sample_next(logits.data_as<float>(), vocab,
+                                       sampling, rng, history, scratch);
+        generated.push_back(next_id);
+        history.push_back(next_id);
+        if (next_id == eos_id || (sampling.stop2 >= 0 && next_id == sampling.stop2)) break;
+        logits = forward_one_q(w, cfg, rope, next_id, kv);
+    }
+    return generated;
+}
+
 } // namespace minillm
