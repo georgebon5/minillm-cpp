@@ -181,6 +181,3 @@ tools/             Python scripts for model download and reference data
 - The pretokenizer handles simple word boundaries, not the full GPT-2 regex. Close enough for inference prompts.
 - No Flash Attention. Naive O(n²) is fine at these sequence lengths.
 
-## License
-
-MIT.
