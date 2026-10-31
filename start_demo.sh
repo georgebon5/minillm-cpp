@@ -14,7 +14,7 @@ until curl -s http://localhost:8080/info > /dev/null 2>&1; do sleep 2; done
 echo "Server ready."
 
 echo "Starting ngrok tunnel..."
-ngrok http --domain="${NGROK_DOMAIN}" 8080
+ngrok http --domain=unwashed-swampland-chaffing.ngrok-free.dev 8080
 
 # cleanup on exit
 kill $SERVER_PID 2>/dev/null
