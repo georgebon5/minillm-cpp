@@ -46,6 +46,33 @@ static float dot_f32(const float* __restrict__ a,
 #endif
 }
 
+#ifdef __ARM_NEON
+// Fused INT8-dequantize + F32-dot: computes scale * sum(q[k] * x[k]) without
+// writing a temporary F32 buffer. Processes 16 INT8 per loop iteration.
+static float dot_i8f32_scaled(const int8_t* __restrict__ q,
+                               const float*  __restrict__ x,
+                               size_t n, float scale) {
+    float32x4_t acc0 = vdupq_n_f32(0.f);
+    float32x4_t acc1 = vdupq_n_f32(0.f);
+    float32x4_t acc2 = vdupq_n_f32(0.f);
+    float32x4_t acc3 = vdupq_n_f32(0.f);
+    size_t k = 0;
+    for (; k + 16 <= n; k += 16) {
+        int8x16_t q16 = vld1q_s8(q + k);
+        int16x8_t lo  = vmovl_s8(vget_low_s8(q16));
+        int16x8_t hi  = vmovl_s8(vget_high_s8(q16));
+        acc0 = vfmaq_f32(acc0, vcvtq_f32_s32(vmovl_s16(vget_low_s16(lo))),  vld1q_f32(x + k));
+        acc1 = vfmaq_f32(acc1, vcvtq_f32_s32(vmovl_s16(vget_high_s16(lo))), vld1q_f32(x + k +  4));
+        acc2 = vfmaq_f32(acc2, vcvtq_f32_s32(vmovl_s16(vget_low_s16(hi))),  vld1q_f32(x + k +  8));
+        acc3 = vfmaq_f32(acc3, vcvtq_f32_s32(vmovl_s16(vget_high_s16(hi))), vld1q_f32(x + k + 12));
+    }
+    float32x4_t acc = vaddq_f32(vaddq_f32(acc0, acc1), vaddq_f32(acc2, acc3));
+    float sum = vaddvq_f32(acc);
+    for (; k < n; ++k) sum += static_cast<float>(q[k]) * x[k];
+    return sum * scale;
+}
+#endif
+
 // ── Embedding ─────────────────────────────────────────────────────────────────
 
 Tensor embedding_lookup(const Tensor& weight, std::span<const int32_t> ids) {
@@ -468,22 +495,27 @@ Tensor linear_q(const Tensor& x, const QuantTensor& Wq) {
     const float* xp = x.data_as<float>();
     float*       yp = out.data_as<float>();
 
-    // Dequantize one output row at a time to avoid allocating a full F32 copy.
-    std::vector<float> row(in_feat);
-
     if (Wq.data.dtype() == DType::I8) {
         const auto* qp = reinterpret_cast<const int8_t*>(Wq.data.data_as<uint8_t>());
+#ifndef __ARM_NEON
+        std::vector<float> row(in_feat);
+#endif
         for (size_t j = 0; j < out_feat; ++j) {
             const float   s    = Wq.scales[j];
             const int8_t* qrow = qp + j * in_feat;
-            for (size_t k = 0; k < in_feat; ++k)
-                row[k] = static_cast<float>(qrow[k]) * s;
+#ifdef __ARM_NEON
+            for (size_t i = 0; i < seq_len; ++i)
+                yp[i * out_feat + j] = dot_i8f32_scaled(qrow, xp + i * in_feat, in_feat, s);
+#else
+            for (size_t k = 0; k < in_feat; ++k) row[k] = static_cast<float>(qrow[k]) * s;
             for (size_t i = 0; i < seq_len; ++i)
                 yp[i * out_feat + j] = dot_f32(xp + i * in_feat, row.data(), in_feat);
+#endif
         }
-    } else {  // I4
+    } else {  // I4 — unchanged
         const size_t   bytes_per_row = (in_feat + 1) / 2;
         const uint8_t* qp            = Wq.data.data_as<uint8_t>();
+        std::vector<float> row(in_feat);
         for (size_t j = 0; j < out_feat; ++j) {
             const float    s    = Wq.scales[j];
             const uint8_t* qrow = qp + j * bytes_per_row;
