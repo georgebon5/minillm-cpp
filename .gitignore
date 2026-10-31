@@ -16,3 +16,4 @@ tools/reference_tensors.json
 tools/reference_logits.json
 tools/reference_tokenizer.json
 tools/.venv/
+.claude/
