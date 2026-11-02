@@ -4,7 +4,6 @@ cd "$(dirname "$0")"
 
 echo "Starting minillm server..."
 ./build/minillm-serve \
-  --model models/SmolLM2-360M-Instruct \
   --model models/SmolLM2-1.7B-Instruct \
   --quant int8 2>&1 &
 SERVER_PID=$!
