@@ -487,8 +487,8 @@ static const char* kIndexHtml = R"HTML(<!doctype html>
   <div class="presets" id="presets"></div>
 
   <div class="controls">
-    <div class="field"><label>Model</label>
-      <select id="modelSel"></select>
+    <div class="field"><label for="modelSel">Model</label>
+      <select id="modelSel"><option value="">loading…</option></select>
     </div>
     <div class="field"><label>Max length</label>
       <input id="maxTokens" type="number" value="512" min="1" max="2048">
@@ -838,8 +838,8 @@ function streamGenerate() {
 
     // Build full ChatML — server bypasses apply_chat_template since it starts with <|im_start|>
     // Small models lose coherence with long histories — cap at last 2 turns (1 exchange).
-    const int histCap = 2;
-    const int histStart = Math.max(0, chatMessages.length - histCap);
+    const histCap = 2;
+    const histStart = Math.max(0, chatMessages.length - histCap);
     promptToSend = buildChatML(chatMessages.slice(histStart), system_prompt);
 
     // Clear textarea for the next user message
