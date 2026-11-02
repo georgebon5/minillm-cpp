@@ -831,7 +831,10 @@ function streamGenerate() {
     outEl.scrollTop = outEl.scrollHeight;
 
     // Build full ChatML — server bypasses apply_chat_template since it starts with <|im_start|>
-    promptToSend = buildChatML(chatMessages, system_prompt);
+    // Small models lose coherence with long histories — cap at last 2 turns (1 exchange).
+    const int histCap = 2;
+    const int histStart = Math.max(0, chatMessages.length - histCap);
+    promptToSend = buildChatML(chatMessages.slice(histStart), system_prompt);
 
     // Clear textarea for the next user message
     promptEl.value = '';
