@@ -10,13 +10,13 @@ A from-scratch LLM inference engine in C++20. No PyTorch, no ggml, no Eigen, no 
 
 I built this because I kept using tools like llama.cpp and transformers without really understanding what was happening inside them. This project is my attempt to close that gap — implement everything myself, verify it against PyTorch reference values, and see how fast I can make it on Apple Silicon.
 
-It runs SmolLM2 (135M, 360M, and 1.7B) on CPU. The 1.7B model fits in 8 GB RAM thanks to a direct BF16→INT8 loading path that never materialises a full FP32 copy.
+It runs SmolLM2 (135M and 1.7B) on CPU. The 1.7B model fits in 8 GB RAM thanks to a direct BF16→INT8 loading path that never materialises a full FP32 copy.
 
 ## What it does
 
 ```bash
 ./build/minillm-generate \
-    --model models/SmolLM2-360M \
+    --model models/SmolLM2-135M \
     --prompt "The key idea behind transformers is" \
     --max-tokens 64
 ```
@@ -55,7 +55,6 @@ The transformer stack is standard: RMSNorm → GQA → RoPE → SwiGLU MLP, with
 | Model | Quant | tok/s |
 |---|---|---:|
 | SmolLM2-135M | FP32 | **61** |
-| SmolLM2-360M | FP32 | **36** |
 | SmolLM2-1.7B | INT8 | **~10** |
 
 *INT8 decode uses the fused NEON kernel; FP32 uses the four-accumulator dot product.*
@@ -95,12 +94,10 @@ Prerequisites: CMake ≥ 3.20, C++20 compiler (clang 14+ or gcc 11+). Python onl
 ```bash
 pip install -r tools/requirements.txt
 
-# Base models (text completion)
+# Base model (text completion)
 python tools/download_model.py --size 135M          # ~270 MB
-python tools/download_model.py --size 360M          # ~720 MB
 
-# Instruct models (chat)
-python tools/download_model.py --size 360M --instruct   # ~720 MB
+# Instruct model (chat)
 python tools/download_model.py --size 1.7B --instruct   # ~3.4 GB on disk, ~1.9 GB in RAM with --quant int8
 ```
 
@@ -111,11 +108,8 @@ The `--instruct` flag downloads the RLHF fine-tuned variant. The server auto-det
 ```bash
 # CLI generation
 ./build/minillm-generate \
-    --model models/SmolLM2-360M \
+    --model models/SmolLM2-135M \
     --prompt "Attention mechanisms work by"
-
-# Web UI — 360M Instruct (fast, fits anywhere)
-./build/minillm-serve --model models/SmolLM2-360M-Instruct
 
 # Web UI — 1.7B Instruct on 8 GB RAM (direct INT8 load, no FP32 peak)
 ./build/minillm-serve --model models/SmolLM2-1.7B-Instruct --quant int8
