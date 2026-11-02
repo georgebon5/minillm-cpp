@@ -638,14 +638,14 @@ repEl.addEventListener('input', () => {
 
 // ── preset prompts (click to fill textarea) ──────────────────────────────
 const PRESETS = [
-  "The capital of France is",
-  "Once upon a time there was a",
-  "The three laws of thermodynamics are:",
-  "To make a cup of coffee you need",
-  "The best programming language for beginners is",
-  "Here's a short poem about the ocean:",
-  "Write a short Python function that checks if a number is prime",
-  "The main difference between Python and C++ is",
+  "What is the capital of France?",
+  "Explain what a neural network is in simple terms.",
+  "What are the three laws of thermodynamics?",
+  "What is the difference between RAM and storage?",
+  "What is machine learning?",
+  "Write a short poem about the ocean.",
+  "What is the best way to learn programming?",
+  "Explain the difference between Python and C++.",
 ];
 const presetsEl = $('presets');
 for (const p of PRESETS) {
