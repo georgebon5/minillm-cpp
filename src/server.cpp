@@ -603,7 +603,7 @@ async function updateTokenCount() {
   try {
     const r = await fetch('/tokenize', {
       method: 'POST',
-      headers: {'Content-Type': 'application/json'},
+      headers: {'Content-Type': 'application/json', 'ngrok-skip-browser-warning': '1'},
       body: JSON.stringify({text: textToCount, model: $('modelSel').value})
     });
     const d = await r.json();
@@ -741,7 +741,7 @@ function renderModelStats(m) {
 
 async function loadInfo(retries = 5) {
   try {
-    const r = await fetch('/info');
+    const r = await fetch('/info', {headers: {'ngrok-skip-browser-warning': '1'}});
     const d = await r.json();
     MODELS = d.models || [d];
     const sel = $('modelSel');
@@ -855,7 +855,8 @@ function streamGenerate() {
   const url = `/stream?prompt=${encodeURIComponent(promptToSend)}&max_tokens=${max_tokens}` +
               `&quant=${quant}&model=${encodeURIComponent(model)}` +
               `&temperature=${temperature}&top_p=${top_p}&rep_penalty=${rep_penalty}` +
-              (!isInstruct && system_prompt ? `&system_prompt=${encodeURIComponent(system_prompt)}` : '');
+              (!isInstruct && system_prompt ? `&system_prompt=${encodeURIComponent(system_prompt)}` : '') +
+              `&ngrok-skip-browser-warning=1`;
   const es  = new EventSource(url);
   activeStream = es;
 
