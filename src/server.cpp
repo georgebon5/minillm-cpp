@@ -555,7 +555,7 @@ static const char* kIndexHtml = R"HTML(<!doctype html>
       new chat
     </button>
   </div>
-  <div class="output" id="out"><span class="placeholder">Output will appear here.</span></div>
+  <div class="output" id="out"></div>
 
   <div class="status-bar">
     <div class="status-item"><span class="k">Generated</span><span class="v" id="statN">0</span><span class="k" style="margin-left:.2rem;">tokens</span></div>
@@ -702,7 +702,7 @@ function renderModelStats(m) {
   chatMessages = [];
   $('newChatBtn').style.display = 'none';
   outEl.classList.remove('chat-mode');
-  outEl.innerHTML = '<span class="placeholder">Output will appear here.</span>';
+  outEl.innerHTML = '';
   let badge = $('instructBadge');
   if (!badge) {
     badge = document.createElement('span');
@@ -1013,7 +1013,7 @@ function clearOutput() {
   chatMessages = [];
   $('newChatBtn').style.display = 'none';
   outEl.classList.remove('chat-mode');
-  outEl.innerHTML = '<span class="placeholder">Output will appear here.</span>';
+  outEl.innerHTML = '';
   $('statN').textContent  = '0';
   $('statMs').textContent = '0ms';
   $('statTps').textContent = '0 tok/s';
