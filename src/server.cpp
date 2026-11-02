@@ -491,7 +491,7 @@ static const char* kIndexHtml = R"HTML(<!doctype html>
       <select id="modelSel"></select>
     </div>
     <div class="field"><label>Max length</label>
-      <input id="maxTokens" type="number" value="200" min="1" max="2048">
+      <input id="maxTokens" type="number" value="512" min="1" max="2048">
     </div>
     <div class="field">
       <label>Creativity</label>
@@ -524,7 +524,7 @@ static const char* kIndexHtml = R"HTML(<!doctype html>
       </div>
       <div class="field">
         <label>Repeat penalty</label>
-        <input id="repPenalty" type="range" min="1.0" max="1.5" step="0.05" value="1.05"
+        <input id="repPenalty" type="range" min="1.0" max="1.5" step="0.05" value="1.15"
                style="width:72px;accent-color:var(--accent);">
         <span id="repVal" class="mono" style="font-size:.78rem;color:var(--fg);min-width:2rem;">1.05</span>
       </div>
@@ -644,7 +644,7 @@ const PRESETS = [
   "To make a cup of coffee you need",
   "The best programming language for beginners is",
   "Here's a short poem about the ocean:",
-  "def fibonacci(n):",
+  "Write a short Python function that checks if a number is prime",
   "The main difference between Python and C++ is",
 ];
 const presetsEl = $('presets');
@@ -736,9 +736,7 @@ function renderModelStats(m) {
   fqBadge.textContent = fq ? 'locked ' + fq : '';
   fqBadge.style.display = fq ? 'inline' : 'none';
 
-  // Adjust default max_tokens based on model size: bigger model → more tokens.
-  const layers = m.layers || 30;
-  $('maxTokens').value = layers >= 36 ? 512 : 200;
+  $('maxTokens').value = 512;
 }
 
 async function loadInfo() {
@@ -1115,9 +1113,16 @@ function escapeHtml(s) {
 }
 
 function renderMarkdown(text) {
-  // Protect fenced code blocks from inline processing.
   const blocks = [];
+  // Closed code blocks first.
   text = text.replace(/```(\w*)\n?([\s\S]*?)```/g, (_, lang, code) => {
+    const i = blocks.length;
+    blocks.push(`<pre><code${lang ? ` class="language-${escapeHtml(lang)}"` : ''}>${escapeHtml(code)}</code></pre>`);
+    return `\x00B${i}\x00`;
+  });
+  // Unclosed code block at end (response truncated by max_tokens).
+  text = text.replace(/```(\w*)?\n?([\s\S]*)$/, (_, lang, code) => {
+    if (!code && !lang) return '```';
     const i = blocks.length;
     blocks.push(`<pre><code${lang ? ` class="language-${escapeHtml(lang)}"` : ''}>${escapeHtml(code)}</code></pre>`);
     return `\x00B${i}\x00`;
