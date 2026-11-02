@@ -739,7 +739,7 @@ function renderModelStats(m) {
   $('maxTokens').value = 512;
 }
 
-async function loadInfo() {
+async function loadInfo(retries = 5) {
   try {
     const r = await fetch('/info');
     const d = await r.json();
@@ -756,10 +756,12 @@ async function loadInfo() {
     sel.addEventListener('change', () => {
       const picked = MODELS.find(x => x.name === sel.value);
       if (picked) renderModelStats(picked);
-      // Also update option labels in case of name-only rendering
     });
     renderModelStats(MODELS.find(x => x.name === sel.value) || MODELS[0]);
-  } catch (e) { console.warn('info failed', e); }
+  } catch (e) {
+    if (retries > 0) setTimeout(() => loadInfo(retries - 1), 2000);
+    else console.warn('info failed', e);
+  }
 }
 function fmtMB(b) { return (b/1024/1024).toFixed(1) + ' MB'; }
 
