@@ -801,8 +801,11 @@ function streamGenerate() {
   const temperature   = parseFloat(tempEl.value);
   const top_p         = parseFloat(topPEl.value);
   const rep_penalty   = parseFloat(repEl.value);
-  const model         = $('modelSel').value;
+  const model         = $('modelSel').value || (MODELS[0] ? MODELS[0].name : '');
   const system_prompt = sysPEl.value.trim();
+
+  // If model list hasn't loaded yet, retry loading then re-run generate.
+  if (!model) { loadInfo().then(streamGenerate); return; }
 
   let promptToSend, genSpan, activeCaret;
 
