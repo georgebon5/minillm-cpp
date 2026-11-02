@@ -518,13 +518,13 @@ static const char* kIndexHtml = R"HTML(<!doctype html>
       </div>
       <div class="field">
         <label>Top-p</label>
-        <input id="topP" type="range" min="0.1" max="1.0" step="0.05" value="0.9"
+        <input id="topP" type="range" min="0.1" max="1.0" step="0.05" value="0.85"
                style="width:72px;accent-color:var(--accent);">
         <span id="topPVal" class="mono" style="font-size:.78rem;color:var(--fg);min-width:2rem;">0.9</span>
       </div>
       <div class="field">
         <label>Repeat penalty</label>
-        <input id="repPenalty" type="range" min="1.0" max="1.5" step="0.05" value="1.15"
+        <input id="repPenalty" type="range" min="1.0" max="1.5" step="0.05" value="1.05"
                style="width:72px;accent-color:var(--accent);">
         <span id="repVal" class="mono" style="font-size:.78rem;color:var(--fg);min-width:2rem;">1.05</span>
       </div>
