@@ -574,6 +574,7 @@ static const char* kIndexHtml = R"HTML(<!doctype html>
 </main>
 
 <script>
+/*INJECT_INFO*/
 const $ = (id) => document.getElementById(id);
 const promptEl = $('prompt');
 const outEl    = $('out');
@@ -739,10 +740,13 @@ function renderModelStats(m) {
   $('maxTokens').value = 512;
 }
 
-async function loadInfo(retries = 5) {
+async function loadInfo() {
   try {
-    const r = await fetch('/info', {headers: {'ngrok-skip-browser-warning': '1'}});
-    const d = await r.json();
+    // Use server-injected data first (avoids ngrok interstitial blocking XHR).
+    // Falls back to fetch if running without injection (e.g. dev reload).
+    const d = (typeof __INITIAL_INFO !== 'undefined')
+      ? __INITIAL_INFO
+      : await fetch('/info', {headers: {'ngrok-skip-browser-warning': '1'}}).then(r => r.json());
     MODELS = d.models || [d];
     const sel = $('modelSel');
     sel.innerHTML = '';
@@ -758,10 +762,7 @@ async function loadInfo(retries = 5) {
       if (picked) renderModelStats(picked);
     });
     renderModelStats(MODELS.find(x => x.name === sel.value) || MODELS[0]);
-  } catch (e) {
-    if (retries > 0) setTimeout(() => loadInfo(retries - 1), 2000);
-    else console.warn('info failed', e);
-  }
+  } catch (e) { console.warn('info failed', e); }
 }
 function fmtMB(b) { return (b/1024/1024).toFixed(1) + ' MB'; }
 
@@ -1736,8 +1737,20 @@ static void dispatch(ServerState& st, int sock, const std::string& raw) {
 
     if (method == "OPTIONS")
         return send_all(sock, http_response(200, "text/plain", ""));
-    if (method == "GET" && (path == "/" || path == "/index.html"))
-        return send_all(sock, http_response(200, "text/html; charset=utf-8", kIndexHtml));
+    if (method == "GET" && (path == "/" || path == "/index.html")) {
+        // Inject model info directly into the HTML so the browser never needs
+        // to fetch /info — avoids ngrok interstitial blocking the XHR.
+        std::string info_json = handle_info(st);
+        // Strip HTTP headers from handle_info response to get just the JSON body.
+        auto body_pos = info_json.find("\r\n\r\n");
+        if (body_pos != std::string::npos) info_json = info_json.substr(body_pos + 4);
+        std::string page = kIndexHtml;
+        const std::string marker = "/*INJECT_INFO*/";
+        auto mpos = page.find(marker);
+        if (mpos != std::string::npos)
+            page.replace(mpos, marker.size(), "const __INITIAL_INFO=" + info_json + ";");
+        return send_all(sock, http_response(200, "text/html; charset=utf-8", page));
+    }
     if (method == "GET" && path == "/info")
         return send_all(sock, handle_info(st));
     if (method == "GET" && path == "/health") {
