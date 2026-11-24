@@ -4,3 +4,4 @@ function(add_minillm_bench name)
 endfunction()
 
 add_minillm_bench(bench_ops)
+add_minillm_bench(bench_kv_q8)
