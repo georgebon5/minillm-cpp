@@ -38,6 +38,15 @@ add_library(minillm STATIC
     src/tokenizer.cpp
     src/kv_cache_q8.cpp
 )
+
+# INT8 KV-cache NEON path (T26.2) — AArch64 only. The compile definition
+# tells the portable TU to omit its scalar dequantize_row() so the linker
+# picks up the NEON override instead.
+if(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64|arm64")
+    target_sources(minillm PRIVATE src/kv_cache_q8_neon.cpp)
+    set_source_files_properties(src/kv_cache_q8.cpp
+        PROPERTIES COMPILE_DEFINITIONS MINILLM_KV_Q8_HAS_NEON=1)
+endif()
 target_include_directories(minillm PUBLIC ${PROJECT_SOURCE_DIR}/include)
 target_compile_features(minillm PUBLIC cxx_std_20)
 target_link_libraries(minillm PUBLIC nlohmann_json::nlohmann_json)
