@@ -78,6 +78,25 @@ Per-channel symmetric, all projection matrices quantized, FP32 activations.
 
 INT8 is nearly free quality-wise. INT4 at per-channel is survivable; per-tensor INT4 is not.
 
+## INT8 KV cache (opt-in utility)
+
+`include/minillm/kv_cache_q8.hpp` adds a per-token symmetric INT8 cache with a hand-written NEON dequant path. It's intentionally **decoupled from the live generation path** — the existing `KVCache` is still FP32 for the CLI and the server — so this is a bolt-on study utility you can wire into your own decode loop without touching the demo. All 132 existing C++ tests stay green.
+
+Layout: `k_data` and `v_data` live in `int8` row-major `[seq_len * kv_dim]`, with one `float` scale per token (`k_scales[t]`, `v_scales[t]`). The scale is `max(|row|) / 127`, so the round-trip error on every lane is bounded by the token's own scale.
+
+The dequant kernel lifts 16 INT8 lanes at a time through `vmovl_s8` → `vmovl_s16` → `vcvtq_f32_s32` → `vmulq_f32`, then falls back to the scalar path for the tail. All the kv dims we care about (SmolLM-135M `kv=192`, Qwen2.5-0.5B `kv=128`) are multiples of 16, so the tail stays dormant.
+
+Benchmark (`./build/benchmarks/bench_kv_q8`, Apple M-series Release build):
+
+| Shape | F32 bytes | Q8 bytes | Ratio | Q8 dequantize full |
+|---|---:|---:|---:|---:|
+| Qwen2.5-0.5B, 4096 tokens | 4.00 MB | 1.05 MB | **3.88×** | 0.07 ms |
+| SmolLM2-135M, 4096 tokens | 6.00 MB | 1.53 MB | **3.92×** | 0.08 ms |
+
+The memory ratio is slightly below the theoretical 4× because of the one FP32 scale per token (`n_tokens * 4` bytes of scales, which decays to zero as `kv_dim` grows). The dequant cost is small (~0.08 ms for 4 k tokens) — negligible next to the attention matmul that consumes the result.
+
+**Cross-contribution.** This utility exists because the companion study [GreekKV](https://github.com/georgebon5/greekkv) ([PR #59, T25](https://github.com/georgebon5/greekkv/pull/59)) is measuring the quality-vs-capacity trade-off of KV quantization on Greek LLM workloads. `greekkv/docs/kernel_bench.md` has the CUDA-side numbers; this repo has the C++ + NEON side.
+
 ## Build
 
 ```bash
